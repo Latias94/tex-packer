@@ -122,7 +122,12 @@ impl AtlasSession {
             self.pages.push(page);
             return Ok((id, frame));
         }
-        Err(TexPackerError::OutOfSpace)
+        Err(TexPackerError::OutOfSpace {
+            key,
+            width: w,
+            height: h,
+            pages_attempted: self.pages.len() + 1,
+        })
     }
 
     pub fn evict(&mut self, page_id: usize, key: &str) -> bool {

@@ -31,6 +31,14 @@ pub struct PackOutput {
     pub pages: Vec<OutputPage>,
 }
 
+impl PackOutput {
+    /// Computes packing statistics for this output.
+    /// This is a convenience method that delegates to `atlas.stats()`.
+    pub fn stats(&self) -> crate::model::PackStats {
+        self.atlas.stats()
+    }
+}
+
 #[instrument(skip_all)]
 /// Packs `inputs` into atlas pages using configuration `cfg` and returns metadata and RGBA pages.
 ///
@@ -39,6 +47,9 @@ pub struct PackOutput {
 /// - When `family` is `Auto`, a small portfolio is tried and the best result is chosen (pages first, then total area).
 /// - `time_budget_ms` can limit Auto evaluation time; `parallel` may evaluate in parallel when enabled.
 pub fn pack_images(inputs: Vec<InputImage>, cfg: PackerConfig) -> Result<PackOutput> {
+    // Validate configuration first
+    cfg.validate()?;
+
     if inputs.is_empty() {
         return Err(TexPackerError::Empty);
     }
@@ -418,7 +429,12 @@ fn pack_prepared(prepared: &[Prep], cfg: &PackerConfig) -> Result<PackOutput> {
         }
 
         if frames.is_empty() {
-            return Err(TexPackerError::OutOfSpace);
+            // No textures could be placed on this page - likely first texture is too large
+            let placed = prepared.len() - remaining.len();
+            return Err(TexPackerError::OutOfSpaceGeneric {
+                placed,
+                total: prepared.len(),
+            });
         }
 
         // Compute final page size; include right/bottom reserved margin (extrude + ceil(padding/2))
@@ -577,7 +593,10 @@ fn pack_auto(prepared: &[Prep], base: PackerConfig) -> Result<PackOutput> {
                 std::cmp::Ordering::Equal => a.1.cmp(&b.1),
                 other => other,
             });
-            return best.map(|x| x.0).ok_or(TexPackerError::OutOfSpace);
+            return best.map(|x| x.0).ok_or(TexPackerError::OutOfSpaceGeneric {
+                placed: 0,
+                total: prepared.len(),
+            });
         }
     }
 
@@ -607,7 +626,10 @@ fn pack_auto(prepared: &[Prep], base: PackerConfig) -> Result<PackOutput> {
             }
         }
     }
-    best.map(|x| x.0).ok_or(TexPackerError::OutOfSpace)
+    best.map(|x| x.0).ok_or(TexPackerError::OutOfSpaceGeneric {
+        placed: 0,
+        total: prepared.len(),
+    })
 }
 
 // ---------------- Layout-only API ----------------
@@ -618,6 +640,9 @@ pub fn pack_layout<K: Into<String>>(
     inputs: Vec<(K, u32, u32)>,
     cfg: PackerConfig,
 ) -> Result<Atlas<String>> {
+    // Validate configuration first
+    cfg.validate()?;
+
     if inputs.is_empty() {
         return Err(TexPackerError::Empty);
     }
@@ -710,7 +735,11 @@ pub fn pack_layout<K: Into<String>>(
             }
         }
         if frames.is_empty() {
-            return Err(TexPackerError::OutOfSpace);
+            let placed = prepared.len() - remaining.len();
+            return Err(TexPackerError::OutOfSpaceGeneric {
+                placed,
+                total: prepared.len(),
+            });
         }
 
         // Compute page size same as pack_prepared
@@ -789,6 +818,9 @@ pub fn pack_layout_items<K: Into<String>>(
     items: Vec<LayoutItem<K>>,
     cfg: PackerConfig,
 ) -> Result<Atlas<String>> {
+    // Validate configuration first
+    cfg.validate()?;
+
     if items.is_empty() {
         return Err(TexPackerError::Empty);
     }
@@ -880,7 +912,11 @@ pub fn pack_layout_items<K: Into<String>>(
             }
         }
         if frames.is_empty() {
-            return Err(TexPackerError::OutOfSpace);
+            let placed = prepared.len() - remaining.len();
+            return Err(TexPackerError::OutOfSpaceGeneric {
+                placed,
+                total: prepared.len(),
+            });
         }
 
         let pad_half = cfg.texture_padding / 2;

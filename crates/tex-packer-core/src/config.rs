@@ -277,6 +277,60 @@ impl Default for PackerConfig {
     }
 }
 
+impl PackerConfig {
+    /// Validates the configuration parameters.
+    ///
+    /// Returns an error if:
+    /// - Dimensions are zero or invalid
+    /// - Padding configuration would leave no usable space
+    /// - Other configuration constraints are violated
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::TexPackerError;
+
+        // Validate dimensions
+        if self.max_width == 0 || self.max_height == 0 {
+            return Err(TexPackerError::InvalidDimensions {
+                width: self.max_width,
+                height: self.max_height,
+            });
+        }
+
+        // Validate padding doesn't exceed available space
+        let total_border = self.border_padding.saturating_mul(2);
+        let total_padding_per_texture = self.texture_padding
+            .saturating_add(self.texture_extrusion.saturating_mul(2));
+
+        if total_border >= self.max_width || total_border >= self.max_height {
+            return Err(TexPackerError::InvalidConfig(format!(
+                "border_padding ({}) * 2 exceeds atlas dimensions ({}x{})",
+                self.border_padding, self.max_width, self.max_height
+            )));
+        }
+
+        // Check if there's at least 1x1 pixel of usable space after borders
+        let usable_width = self.max_width.saturating_sub(total_border);
+        let usable_height = self.max_height.saturating_sub(total_border);
+
+        if usable_width == 0 || usable_height == 0 {
+            return Err(TexPackerError::InvalidConfig(format!(
+                "No usable space after border_padding: {}x{} - {} * 2 = {}x{}",
+                self.max_width, self.max_height, self.border_padding,
+                usable_width, usable_height
+            )));
+        }
+
+        // Warn if padding per texture is very large relative to atlas size
+        if total_padding_per_texture > usable_width / 2 || total_padding_per_texture > usable_height / 2 {
+            // This is not an error, but might indicate misconfiguration
+            // We'll allow it but it might result in poor packing
+        }
+
+        // trim_threshold is u8, so it's always valid (0-255)
+
+        Ok(())
+    }
+}
+
 fn default_family() -> AlgorithmFamily {
     AlgorithmFamily::Skyline
 }

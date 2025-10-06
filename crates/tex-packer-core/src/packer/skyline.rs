@@ -197,16 +197,37 @@ impl SkylinePacker {
     }
 
     fn merge(&mut self) {
-        let mut i = 1;
-        while i < self.skylines.len() {
-            if self.skylines[i - 1].y == self.skylines[i].y {
-                let w = self.skylines[i].w;
-                self.skylines[i - 1].w = self.skylines[i - 1].w.saturating_add(w);
-                self.skylines.remove(i);
-            } else {
-                i += 1;
-            }
+        // Optimized merge: single pass instead of repeated Vec::remove
+        // Old implementation: O(n²) due to Vec::remove in loop
+        // New implementation: O(n) with single pass
+
+        if self.skylines.len() <= 1 {
+            return;
         }
+
+        let mut write_idx = 0;
+        let mut read_idx = 1;
+
+        while read_idx < self.skylines.len() {
+            // Check if current node can be merged with the previous written node
+            if self.skylines[write_idx].y == self.skylines[read_idx].y {
+                // Merge: extend the width of the node at write_idx
+                self.skylines[write_idx].w = self.skylines[write_idx]
+                    .w
+                    .saturating_add(self.skylines[read_idx].w);
+                // Don't advance write_idx, continue checking next nodes for merging
+            } else {
+                // Can't merge, move to next write position
+                write_idx += 1;
+                if write_idx != read_idx {
+                    self.skylines[write_idx] = self.skylines[read_idx];
+                }
+            }
+            read_idx += 1;
+        }
+
+        // Truncate to keep only the merged nodes
+        self.skylines.truncate(write_idx + 1);
     }
 }
 

@@ -80,3 +80,124 @@ pub struct Atlas<K = String> {
     pub pages: Vec<Page<K>>,
     pub meta: Meta,
 }
+
+/// Statistics about atlas packing efficiency.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PackStats {
+    /// Total number of pages in the atlas.
+    pub num_pages: usize,
+    /// Total number of frames (textures) packed.
+    pub num_frames: usize,
+    /// Total area of all pages (sum of width * height for each page).
+    pub total_page_area: u64,
+    /// Total area used by all frames (sum of frame width * height).
+    pub used_frame_area: u64,
+    /// Occupancy ratio: used_frame_area / total_page_area (0.0 to 1.0).
+    /// Higher is better (less wasted space).
+    pub occupancy: f64,
+    /// Average page dimensions.
+    pub avg_page_width: f64,
+    pub avg_page_height: f64,
+    /// Largest page dimensions.
+    pub max_page_width: u32,
+    pub max_page_height: u32,
+    /// Number of rotated frames.
+    pub num_rotated: usize,
+    /// Number of trimmed frames.
+    pub num_trimmed: usize,
+}
+
+impl<K> Atlas<K> {
+    /// Computes packing statistics for this atlas.
+    pub fn stats(&self) -> PackStats {
+        let num_pages = self.pages.len();
+        let mut num_frames = 0;
+        let mut total_page_area = 0u64;
+        let mut used_frame_area = 0u64;
+        let mut max_page_width = 0u32;
+        let mut max_page_height = 0u32;
+        let mut num_rotated = 0;
+        let mut num_trimmed = 0;
+
+        for page in &self.pages {
+            let page_area = (page.width as u64) * (page.height as u64);
+            total_page_area += page_area;
+            max_page_width = max_page_width.max(page.width);
+            max_page_height = max_page_height.max(page.height);
+
+            for frame in &page.frames {
+                num_frames += 1;
+                let frame_area = (frame.frame.w as u64) * (frame.frame.h as u64);
+                used_frame_area += frame_area;
+
+                if frame.rotated {
+                    num_rotated += 1;
+                }
+                if frame.trimmed {
+                    num_trimmed += 1;
+                }
+            }
+        }
+
+        let occupancy = if total_page_area > 0 {
+            used_frame_area as f64 / total_page_area as f64
+        } else {
+            0.0
+        };
+
+        let (avg_page_width, avg_page_height) = if num_pages > 0 {
+            let total_width: u64 = self.pages.iter().map(|p| p.width as u64).sum();
+            let total_height: u64 = self.pages.iter().map(|p| p.height as u64).sum();
+            (
+                total_width as f64 / num_pages as f64,
+                total_height as f64 / num_pages as f64,
+            )
+        } else {
+            (0.0, 0.0)
+        };
+
+        PackStats {
+            num_pages,
+            num_frames,
+            total_page_area,
+            used_frame_area,
+            occupancy,
+            avg_page_width,
+            avg_page_height,
+            max_page_width,
+            max_page_height,
+            num_rotated,
+            num_trimmed,
+        }
+    }
+}
+
+impl PackStats {
+    /// Returns a human-readable summary of the statistics.
+    pub fn summary(&self) -> String {
+        format!(
+            "Pages: {}, Frames: {}, Occupancy: {:.2}%, Total Area: {} px², Used Area: {} px², Rotated: {}, Trimmed: {}",
+            self.num_pages,
+            self.num_frames,
+            self.occupancy * 100.0,
+            self.total_page_area,
+            self.used_frame_area,
+            self.num_rotated,
+            self.num_trimmed,
+        )
+    }
+
+    /// Returns wasted space in pixels.
+    pub fn wasted_area(&self) -> u64 {
+        self.total_page_area.saturating_sub(self.used_frame_area)
+    }
+
+    /// Returns wasted space as a percentage (0.0 to 100.0).
+    pub fn waste_percentage(&self) -> f64 {
+        if self.total_page_area > 0 {
+            (self.wasted_area() as f64 / self.total_page_area as f64) * 100.0
+        } else {
+            0.0
+        }
+    }
+}

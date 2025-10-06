@@ -1,12 +1,13 @@
-use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig};
+use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig, SkylineHeuristic};
 use crate::error::{Result, TexPackerError};
 use crate::model::{Atlas, Frame, Meta, Page, Rect};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum RuntimeStrategy {
     Guillotine,
     Shelf(ShelfPolicy),
+    Skyline(SkylineHeuristic),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +99,11 @@ enum RtMode {
         shelves: Vec<Shelf>,
         next_y: u32,
     },
+    Skyline {
+        border: Rect,
+        heuristic: SkylineHeuristic,
+        skylines: Vec<SkylineNode>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -105,6 +111,13 @@ struct Shelf {
     y: u32,
     h: u32,
     segs: Vec<(u32, u32)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SkylineNode {
+    x: u32,
+    y: u32,
+    w: u32,
 }
 
 impl AtlasSession {
@@ -123,7 +136,7 @@ impl AtlasSession {
         let pad = self.cfg.border_padding;
         let w = self.cfg.max_width.saturating_sub(pad.saturating_mul(2));
         let h = self.cfg.max_height.saturating_sub(pad.saturating_mul(2));
-        let mode = match self._strategy {
+        let mode = match &self._strategy {
             RuntimeStrategy::Guillotine => RtMode::Guillotine {
                 free: vec![Rect::new(pad, pad, w, h)],
                 choice: self.cfg.g_choice.clone(),
@@ -131,9 +144,14 @@ impl AtlasSession {
             },
             RuntimeStrategy::Shelf(policy) => RtMode::Shelf {
                 border: Rect::new(pad, pad, w, h),
-                policy,
+                policy: *policy,
                 shelves: Vec::new(),
                 next_y: pad,
+            },
+            RuntimeStrategy::Skyline(heuristic) => RtMode::Skyline {
+                border: Rect::new(pad, pad, w, h),
+                heuristic: heuristic.clone(),
+                skylines: vec![SkylineNode { x: pad, y: pad, w }],
             },
         };
         RtPage {
@@ -298,6 +316,16 @@ impl AtlasSession {
                         }
                     }
                 }
+                RtMode::Skyline {
+                    border, skylines, ..
+                } => {
+                    // Approximate free area as the area above skyline
+                    num_free_rects += skylines.len();
+                    for node in skylines {
+                        let height_above = border.bottom().saturating_sub(node.y);
+                        total_free_area += (node.w as u64) * (height_above as u64);
+                    }
+                }
             }
         }
 
@@ -380,6 +408,11 @@ impl RtPage {
                 shelves,
                 next_y,
             } => choose_shelf(self.allow_rotation, border, *policy, shelves, *next_y, w, h),
+            RtMode::Skyline {
+                border,
+                heuristic,
+                skylines,
+            } => choose_skyline(self.allow_rotation, border, heuristic, skylines, w, h),
         }
     }
 
@@ -429,6 +462,9 @@ impl RtPage {
                     *next_y = (*next_y).max(slot.y + slot.h);
                 }
             }
+            RtMode::Skyline { skylines, .. } => {
+                place_skyline(skylines, slot);
+            }
         }
         self.used
             .insert(key.to_string(), (*slot, rotated, frame.clone()));
@@ -452,6 +488,9 @@ impl RtPage {
                         segs: vec![(r.x, r.w)],
                     });
                 }
+            }
+            RtMode::Skyline { .. } => {
+                // Skyline doesn't support add_free (eviction not optimized)
             }
         }
     }
@@ -685,4 +724,194 @@ fn merge_shelf_segments(sh: &mut Shelf) {
         out.push((x, w));
     }
     sh.segs = out;
+}
+
+// Skyline helper functions
+fn choose_skyline(
+    allow_rotation: bool,
+    border: &Rect,
+    heuristic: &SkylineHeuristic,
+    skylines: &[SkylineNode],
+    w: u32,
+    h: u32,
+) -> Option<(Rect, bool)> {
+    match heuristic {
+        SkylineHeuristic::BottomLeft => {
+            find_skyline_bottom_left(allow_rotation, border, skylines, w, h)
+        }
+        SkylineHeuristic::MinWaste => {
+            find_skyline_min_waste(allow_rotation, border, skylines, w, h)
+        }
+    }
+}
+
+fn can_put_skyline(
+    skylines: &[SkylineNode],
+    border: &Rect,
+    mut i: usize,
+    w: u32,
+    h: u32,
+) -> Option<Rect> {
+    if i >= skylines.len() {
+        return None;
+    }
+    let mut rect = Rect::new(skylines[i].x, 0, w, h);
+    let mut width_left = rect.w;
+    loop {
+        rect.y = rect.y.max(skylines[i].y);
+        if !border.contains(&rect) {
+            return None;
+        }
+        if skylines[i].w >= width_left {
+            return Some(rect);
+        }
+        width_left = width_left.saturating_sub(skylines[i].w);
+        i += 1;
+        if i >= skylines.len() {
+            return None;
+        }
+    }
+}
+
+fn find_skyline_bottom_left(
+    allow_rotation: bool,
+    border: &Rect,
+    skylines: &[SkylineNode],
+    w: u32,
+    h: u32,
+) -> Option<(Rect, bool)> {
+    let mut best_bottom = u32::MAX;
+    let mut best_width = u32::MAX;
+    let mut best_index: Option<usize> = None;
+    let mut best_rect = Rect::new(0, 0, 0, 0);
+    let mut best_rot = false;
+
+    for i in 0..skylines.len() {
+        if let Some(r) = can_put_skyline(skylines, border, i, w, h) {
+            if r.bottom() < best_bottom || (r.bottom() == best_bottom && skylines[i].w < best_width)
+            {
+                best_bottom = r.bottom();
+                best_width = skylines[i].w;
+                best_index = Some(i);
+                best_rect = r;
+                best_rot = false;
+            }
+        }
+        if allow_rotation {
+            if let Some(r) = can_put_skyline(skylines, border, i, h, w) {
+                if r.bottom() < best_bottom
+                    || (r.bottom() == best_bottom && skylines[i].w < best_width)
+                {
+                    best_bottom = r.bottom();
+                    best_width = skylines[i].w;
+                    best_index = Some(i);
+                    best_rect = r;
+                    best_rot = true;
+                }
+            }
+        }
+    }
+
+    best_index.map(|_| (best_rect, best_rot))
+}
+
+fn find_skyline_min_waste(
+    allow_rotation: bool,
+    border: &Rect,
+    skylines: &[SkylineNode],
+    w: u32,
+    h: u32,
+) -> Option<(Rect, bool)> {
+    let mut best_waste = i64::MAX;
+    let mut best_bottom = u32::MAX;
+    let mut best_index: Option<usize> = None;
+    let mut best_rect = Rect::new(0, 0, 0, 0);
+    let mut best_rot = false;
+
+    for i in 0..skylines.len() {
+        if let Some(r) = can_put_skyline(skylines, border, i, w, h) {
+            let waste = compute_waste(skylines, i, &r);
+            if waste < best_waste || (waste == best_waste && r.bottom() < best_bottom) {
+                best_waste = waste;
+                best_bottom = r.bottom();
+                best_index = Some(i);
+                best_rect = r;
+                best_rot = false;
+            }
+        }
+        if allow_rotation {
+            if let Some(r) = can_put_skyline(skylines, border, i, h, w) {
+                let waste = compute_waste(skylines, i, &r);
+                if waste < best_waste || (waste == best_waste && r.bottom() < best_bottom) {
+                    best_waste = waste;
+                    best_bottom = r.bottom();
+                    best_index = Some(i);
+                    best_rect = r;
+                    best_rot = true;
+                }
+            }
+        }
+    }
+
+    best_index.map(|_| (best_rect, best_rot))
+}
+
+fn compute_waste(skylines: &[SkylineNode], start_idx: usize, rect: &Rect) -> i64 {
+    let mut waste = 0i64;
+    let rect_right = rect.x + rect.w;
+    let mut i = start_idx;
+    while i < skylines.len() && skylines[i].x < rect_right {
+        if skylines[i].y < rect.bottom() {
+            let overlap_w = rect_right
+                .min(skylines[i].x + skylines[i].w)
+                .saturating_sub(skylines[i].x.max(rect.x));
+            let overlap_h = rect.bottom().saturating_sub(skylines[i].y);
+            waste += (overlap_w as i64) * (overlap_h as i64);
+        }
+        i += 1;
+    }
+    waste
+}
+
+fn place_skyline(skylines: &mut Vec<SkylineNode>, slot: &Rect) {
+    // Find nodes that intersect with the placed rectangle
+    let mut first_idx = None;
+    let mut last_idx = None;
+
+    for (i, node) in skylines.iter().enumerate() {
+        if node.x < slot.x + slot.w && node.x + node.w > slot.x {
+            if first_idx.is_none() {
+                first_idx = Some(i);
+            }
+            last_idx = Some(i);
+        }
+    }
+
+    if let (Some(first), Some(last)) = (first_idx, last_idx) {
+        // Create new node at the placed rectangle's top
+        let new_node = SkylineNode {
+            x: slot.x,
+            y: slot.bottom(),
+            w: slot.w,
+        };
+
+        // Remove intersecting nodes and insert new node
+        skylines.drain(first..=last);
+        skylines.insert(first, new_node);
+
+        // Merge adjacent nodes with same height
+        merge_skyline_nodes(skylines);
+    }
+}
+
+fn merge_skyline_nodes(skylines: &mut Vec<SkylineNode>) {
+    let mut i = 0;
+    while i < skylines.len().saturating_sub(1) {
+        if skylines[i].y == skylines[i + 1].y {
+            skylines[i].w += skylines[i + 1].w;
+            skylines.remove(i + 1);
+        } else {
+            i += 1;
+        }
+    }
 }

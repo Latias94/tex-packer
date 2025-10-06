@@ -1,3 +1,5 @@
+#![allow(clippy::match_like_matches_macro)]
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::{env, fs};

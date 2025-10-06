@@ -76,7 +76,6 @@ fn run(n: usize, mr_ref: bool, seed: u64) {
 }
 
 fn main() {
-    use rand::SeedableRng;
     // N=1000 and 5000
     println!("N=1000");
     run(1000, false, 1337);

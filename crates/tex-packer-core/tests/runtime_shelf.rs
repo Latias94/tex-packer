@@ -10,7 +10,7 @@ fn shelf_nextfit_append_evict_reuse() {
         .build();
     let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Shelf(ShelfPolicy::NextFit));
 
-    let (page_a, a) = sess.append("A".into(), 60, 30).expect("append A");
+    let (page_a, _a) = sess.append("A".into(), 60, 30).expect("append A");
     let (_page_b, _b) = sess.append("B".into(), 80, 30).expect("append B");
     assert_eq!(page_a, 0);
 

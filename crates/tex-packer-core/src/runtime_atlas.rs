@@ -43,7 +43,7 @@ impl UpdateRegion {
 }
 
 /// Runtime atlas with pixel data management.
-/// 
+///
 /// This extends `AtlasSession` by managing actual pixel data in addition to geometry.
 /// Useful for game engines that need to dynamically update GPU textures.
 pub struct RuntimeAtlas {
@@ -103,14 +103,12 @@ impl RuntimeAtlas {
     ) -> Option<UpdateRegion> {
         // Get frame info before evicting
         let frame_info = if clear {
-            self.session.get_frame(key).map(|(_, frame)| {
-                UpdateRegion {
-                    page_id,
-                    x: frame.frame.x,
-                    y: frame.frame.y,
-                    width: frame.frame.w,
-                    height: frame.frame.h,
-                }
+            self.session.get_frame(key).map(|(_, frame)| UpdateRegion {
+                page_id,
+                x: frame.frame.x,
+                y: frame.frame.y,
+                width: frame.frame.w,
+                height: frame.frame.h,
             })
         } else {
             None
@@ -135,15 +133,15 @@ impl RuntimeAtlas {
     pub fn evict_by_key_with_clear(&mut self, key: &str, clear: bool) -> Option<UpdateRegion> {
         // Get frame info before evicting
         let frame_info = if clear {
-            self.session.get_frame(key).map(|(page_id, frame)| {
-                UpdateRegion {
+            self.session
+                .get_frame(key)
+                .map(|(page_id, frame)| UpdateRegion {
                     page_id,
                     x: frame.frame.x,
                     y: frame.frame.y,
                     width: frame.frame.w,
                     height: frame.frame.h,
-                }
-            })
+                })
         } else {
             None
         };
@@ -278,6 +276,3 @@ impl RuntimeAtlas {
         }
     }
 }
-
-
-

@@ -30,17 +30,17 @@ fn test_pack_stats_basic() {
     // Verify basic stats
     assert_eq!(stats.num_frames, 4);
     assert!(stats.num_pages >= 1);
-    
+
     // Each frame is 64x64 = 4096 pixels
     assert_eq!(stats.used_frame_area, 4 * 64 * 64);
-    
+
     // Occupancy should be reasonable (at least 25% for this simple case)
     assert!(stats.occupancy > 0.25, "Occupancy: {}", stats.occupancy);
     assert!(stats.occupancy <= 1.0);
-    
+
     // Total page area should be >= used area
     assert!(stats.total_page_area >= stats.used_frame_area);
-    
+
     // No rotations or trimming in this test
     assert_eq!(stats.num_rotated, 0);
     assert_eq!(stats.num_trimmed, 0);
@@ -115,7 +115,7 @@ fn test_pack_stats_with_trimming() {
     assert_eq!(stats.num_frames, 2);
     // Both should be trimmed
     assert_eq!(stats.num_trimmed, 2);
-    
+
     // Used area should be less than 2 * 64 * 64 due to trimming
     assert!(stats.used_frame_area < 2 * 64 * 64);
 }
@@ -136,9 +136,9 @@ fn test_pack_stats_summary() {
 
     let result = pack_images(inputs, cfg).expect("packing should succeed");
     let stats = result.stats();
-    
+
     let summary = stats.summary();
-    
+
     // Summary should contain key information
     assert!(summary.contains("Pages:"));
     assert!(summary.contains("Frames:"));
@@ -175,7 +175,13 @@ fn test_pack_stats_wasted_area() {
 
     // With force_max_dimensions, should have significant wasted space
     // 32x32 texture in 256x256 page = 1024 used, 65536 total
-    assert!(wasted > 0, "Wasted: {}, Total: {}, Used: {}", wasted, stats.total_page_area, stats.used_frame_area);
+    assert!(
+        wasted > 0,
+        "Wasted: {}, Total: {}, Used: {}",
+        wasted,
+        stats.total_page_area,
+        stats.used_frame_area
+    );
     assert!(waste_pct > 0.0);
     assert!(waste_pct < 100.0);
 
@@ -191,22 +197,18 @@ fn test_pack_stats_layout_only() {
         ..Default::default()
     };
 
-    let inputs = vec![
-        ("a", 32, 32),
-        ("b", 64, 64),
-        ("c", 48, 48),
-    ];
+    let inputs = vec![("a", 32, 32), ("b", 64, 64), ("c", 48, 48)];
 
     let atlas = pack_layout(inputs, cfg).expect("packing should succeed");
     let stats = atlas.stats();
 
     assert_eq!(stats.num_frames, 3);
     assert!(stats.num_pages >= 1);
-    
+
     // Calculate expected used area
     let expected_used = 32 * 32 + 64 * 64 + 48 * 48;
     assert_eq!(stats.used_frame_area, expected_used);
-    
+
     assert!(stats.occupancy > 0.0);
     assert!(stats.occupancy <= 1.0);
 }
@@ -239,13 +241,16 @@ fn test_pack_stats_multiple_pages() {
 
     assert_eq!(stats.num_frames, 20);
     assert!(stats.num_pages > 1, "Should require multiple pages");
-    
+
     // Total area should be sum of all pages
-    let expected_total: u64 = result.atlas.pages.iter()
+    let expected_total: u64 = result
+        .atlas
+        .pages
+        .iter()
         .map(|p| (p.width as u64) * (p.height as u64))
         .sum();
     assert_eq!(stats.total_page_area, expected_total);
-    
+
     // Max page dimensions should be <= configured max
     assert!(stats.max_page_width <= 128);
     assert!(stats.max_page_height <= 128);
@@ -282,4 +287,3 @@ fn test_pack_stats_empty_atlas() {
     assert_eq!(stats.occupancy, 0.0);
     assert_eq!(stats.wasted_area(), 0);
 }
-

@@ -46,7 +46,7 @@ pub mod prelude {
         AlgorithmFamily, AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic,
         PackerConfig, PackerConfigBuilder, SkylineHeuristic, SortOrder,
     };
-    pub use crate::model::{Atlas, Frame, Meta, Page, PackStats, Rect};
+    pub use crate::model::{Atlas, Frame, Meta, PackStats, Page, Rect};
     pub use crate::pipeline::LayoutItem;
     pub use crate::runtime::{AtlasSession, RuntimeStats, RuntimeStrategy, ShelfPolicy};
     pub use crate::runtime_atlas::{RuntimeAtlas, UpdateRegion};

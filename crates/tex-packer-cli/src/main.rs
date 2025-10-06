@@ -226,7 +226,7 @@ fn run_pack(cli: &PackArgs, show_progress: bool) -> anyhow::Result<()> {
     let (family, mr_heuristic, sky_heuristic, g_choice, g_split, auto_mode) = parse_algo(cli)?;
 
     // Load config file if provided; config file sets algorithm-related options en bloc
-    let mut cfg = if let Some(path) = &cli.config {
+    let cfg = if let Some(path) = &cli.config {
         let file = fs::read_to_string(path)?;
         let y: YamlConfig = serde_yaml::from_str(&file)?;
         let mut tmp = y.into_packer_config(PackerConfig {
@@ -662,6 +662,7 @@ fn parse_algo(
     Ok((family, h, sky, g_choice, g_split, auto_mode))
 }
 
+#[allow(dead_code)]
 fn fmt_dur(d: Duration) -> String {
     let ms = d.as_secs_f64() * 1000.0;
     if ms >= 1.0 {
@@ -729,14 +730,12 @@ fn should_skip(
 }
 
 fn is_image(p: &Path) -> bool {
-    match p
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-    {
-        Some(ext) if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "tga" | "gif") => true,
-        _ => false,
-    }
+    matches!(
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase()),
+        Some(ext) if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "tga" | "gif")
+    )
 }
 
 fn load_images_with_progress(paths: &[PathBuf], progress: bool) -> anyhow::Result<Vec<InputImage>> {

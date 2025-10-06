@@ -297,7 +297,8 @@ impl PackerConfig {
 
         // Validate padding doesn't exceed available space
         let total_border = self.border_padding.saturating_mul(2);
-        let total_padding_per_texture = self.texture_padding
+        let total_padding_per_texture = self
+            .texture_padding
             .saturating_add(self.texture_extrusion.saturating_mul(2));
 
         if total_border >= self.max_width || total_border >= self.max_height {
@@ -314,13 +315,14 @@ impl PackerConfig {
         if usable_width == 0 || usable_height == 0 {
             return Err(TexPackerError::InvalidConfig(format!(
                 "No usable space after border_padding: {}x{} - {} * 2 = {}x{}",
-                self.max_width, self.max_height, self.border_padding,
-                usable_width, usable_height
+                self.max_width, self.max_height, self.border_padding, usable_width, usable_height
             )));
         }
 
         // Warn if padding per texture is very large relative to atlas size
-        if total_padding_per_texture > usable_width / 2 || total_padding_per_texture > usable_height / 2 {
+        if total_padding_per_texture > usable_width / 2
+            || total_padding_per_texture > usable_height / 2
+        {
             // This is not an error, but might indicate misconfiguration
             // We'll allow it but it might result in poor packing
         }

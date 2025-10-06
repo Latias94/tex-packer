@@ -3,6 +3,7 @@ use tex_packer_core::model::{Frame, Rect};
 use tex_packer_core::packer::maxrects::MaxRectsPacker;
 use tex_packer_core::packer::Packer;
 
+#[allow(dead_code)]
 fn disjoint(frames: &[Frame]) -> bool {
     for i in 0..frames.len() {
         for j in (i + 1)..frames.len() {

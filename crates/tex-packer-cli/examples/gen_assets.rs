@@ -1,3 +1,5 @@
+#![allow(unused_parens, unused_mut, non_snake_case, clippy::too_many_arguments)]
+
 use image::{Rgba, RgbaImage};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};

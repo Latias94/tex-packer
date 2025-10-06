@@ -77,11 +77,11 @@ fn extrude_does_not_bleed_across_neighbors() {
     // Ensure there's at least one pixel gap between content frames (due to padding/extrude reservations)
     // and check border pixels adjacent to content are of correct color (i.e., extruded from the same content,
     // not contaminated by the neighbor).
-    let red_edge = (
+    let _red_edge = (
         red_f.frame.x + red_f.frame.w - 1,
         red_f.frame.y + red_f.frame.h - 1,
     );
-    let green_edge = (
+    let _green_edge = (
         green_f.frame.x + green_f.frame.w - 1,
         green_f.frame.y + green_f.frame.h - 1,
     );

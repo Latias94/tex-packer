@@ -1,3 +1,5 @@
+#![allow(unused_parens, unused_mut, clippy::manual_clamp)]
+
 use image::{Rgba, RgbaImage};
 use rand::{Rng, SeedableRng};
 use std::fs;

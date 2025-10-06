@@ -11,7 +11,7 @@ fn test_zero_width() {
         max_height: 1024,
         ..Default::default()
     };
-    
+
     let result = cfg.validate();
     assert!(result.is_err());
     match result {
@@ -30,7 +30,7 @@ fn test_zero_height() {
         max_height: 0,
         ..Default::default()
     };
-    
+
     let result = cfg.validate();
     assert!(result.is_err());
     match result {
@@ -49,7 +49,7 @@ fn test_both_dimensions_zero() {
         max_height: 0,
         ..Default::default()
     };
-    
+
     let result = cfg.validate();
     assert!(result.is_err());
 }
@@ -63,7 +63,7 @@ fn test_border_padding_exceeds_width() {
         border_padding: 50,
         ..Default::default()
     };
-    
+
     let result = cfg.validate();
     assert!(result.is_err());
     match result {
@@ -82,7 +82,7 @@ fn test_border_padding_leaves_no_space() {
         border_padding: 50, // 50 * 2 = 100, leaves 0 space
         ..Default::default()
     };
-    
+
     let result = cfg.validate();
     assert!(result.is_err());
 }
@@ -92,7 +92,7 @@ fn test_border_padding_leaves_no_space() {
 fn test_empty_input_pack_images() {
     let cfg = PackerConfig::default();
     let inputs: Vec<InputImage> = vec![];
-    
+
     let result = pack_images(inputs, cfg);
     assert!(result.is_err());
     match result {
@@ -105,7 +105,7 @@ fn test_empty_input_pack_images() {
 fn test_empty_input_pack_layout() {
     let cfg = PackerConfig::default();
     let inputs: Vec<(String, u32, u32)> = vec![];
-    
+
     let result = pack_layout(inputs, cfg);
     assert!(result.is_err());
     match result {
@@ -126,14 +126,14 @@ fn test_texture_too_large_width() {
         trim: false,
         ..Default::default()
     };
-    
+
     // Create a 200x50 image (width exceeds atlas)
     let img = DynamicImage::ImageRgba8(RgbaImage::new(200, 50));
     let inputs = vec![InputImage {
         key: "large".to_string(),
         image: img,
     }];
-    
+
     let result = pack_images(inputs, cfg);
     assert!(result.is_err());
     // Should fail to pack
@@ -150,14 +150,14 @@ fn test_texture_too_large_height() {
         trim: false,
         ..Default::default()
     };
-    
+
     // Create a 50x200 image (height exceeds atlas)
     let img = DynamicImage::ImageRgba8(RgbaImage::new(50, 200));
     let inputs = vec![InputImage {
         key: "tall".to_string(),
         image: img,
     }];
-    
+
     let result = pack_images(inputs, cfg);
     assert!(result.is_err());
 }
@@ -173,7 +173,7 @@ fn test_minimum_valid_config() {
         texture_extrusion: 0,
         ..Default::default()
     };
-    
+
     assert!(cfg.validate().is_ok());
 }
 
@@ -190,13 +190,13 @@ fn test_single_pixel_texture() {
         family: AlgorithmFamily::Skyline,
         ..Default::default()
     };
-    
+
     let img = DynamicImage::ImageRgba8(RgbaImage::new(1, 1));
     let inputs = vec![InputImage {
         key: "pixel".to_string(),
         image: img,
     }];
-    
+
     let result = pack_images(inputs, cfg);
     assert!(result.is_ok());
     let output = result.unwrap();
@@ -212,7 +212,7 @@ fn test_very_large_dimensions() {
         max_height: 16384,
         ..Default::default()
     };
-    
+
     assert!(cfg.validate().is_ok());
 }
 
@@ -258,7 +258,7 @@ fn test_extreme_padding() {
         texture_extrusion: 50,
         ..Default::default()
     };
-    
+
     // Should be valid (though impractical)
     assert!(cfg.validate().is_ok());
 }
@@ -272,7 +272,7 @@ fn test_zero_sized_texture_layout() {
         ("zero_width".to_string(), 0, 32),
         ("zero_height".to_string(), 32, 0),
     ];
-    
+
     // Should handle gracefully (likely skip zero-sized textures)
     let result = pack_layout(inputs, cfg);
     // Depending on implementation, this might succeed or fail
@@ -288,7 +288,7 @@ fn test_many_small_textures() {
         max_height: 512,
         ..Default::default()
     };
-    
+
     let mut inputs = Vec::new();
     for i in 0..100 {
         let img = DynamicImage::ImageRgba8(RgbaImage::new(8, 8));
@@ -297,10 +297,9 @@ fn test_many_small_textures() {
             image: img,
         });
     }
-    
+
     let result = pack_images(inputs, cfg);
     assert!(result.is_ok());
     let output = result.unwrap();
-    assert!(output.atlas.pages.len() >= 1);
+    assert!(!output.atlas.pages.is_empty());
 }
-

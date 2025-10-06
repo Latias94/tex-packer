@@ -62,9 +62,10 @@ fn skyline_offsets_produce_disjoint_slots() {
     let cfg = cfg_base();
     let mut p = SkylinePacker::new(cfg.clone());
     let r = Rect::new(0, 0, 40, 40);
-    let mut frames = Vec::new();
-    frames.push(<SkylinePacker as Packer<String>>::pack(&mut p, "a".into(), &r).expect("place a"));
-    frames.push(<SkylinePacker as Packer<String>>::pack(&mut p, "b".into(), &r).expect("place b"));
+    let frames = [
+        <SkylinePacker as Packer<String>>::pack(&mut p, "a".into(), &r).expect("place a"),
+        <SkylinePacker as Packer<String>>::pack(&mut p, "b".into(), &r).expect("place b"),
+    ];
     assert_eq!(frames.len(), 2);
 
     let s0 = expanded_slot(&frames[0].frame, cfg.texture_padding, cfg.texture_extrusion);
@@ -81,9 +82,10 @@ fn maxrects_offsets_produce_disjoint_slots() {
     cfg.family = AlgorithmFamily::MaxRects;
     let mut p = MaxRectsPacker::new(cfg.clone(), MaxRectsHeuristic::BestAreaFit);
     let r = Rect::new(0, 0, 40, 40);
-    let mut frames = Vec::new();
-    frames.push(<MaxRectsPacker as Packer<String>>::pack(&mut p, "a".into(), &r).expect("place a"));
-    frames.push(<MaxRectsPacker as Packer<String>>::pack(&mut p, "b".into(), &r).expect("place b"));
+    let frames = [
+        <MaxRectsPacker as Packer<String>>::pack(&mut p, "a".into(), &r).expect("place a"),
+        <MaxRectsPacker as Packer<String>>::pack(&mut p, "b".into(), &r).expect("place b"),
+    ];
     assert_eq!(frames.len(), 2);
 
     let s0 = expanded_slot(&frames[0].frame, cfg.texture_padding, cfg.texture_extrusion);
@@ -104,11 +106,10 @@ fn guillotine_offsets_produce_disjoint_slots() {
         GuillotineSplit::SplitShorterLeftoverAxis,
     );
     let r = Rect::new(0, 0, 40, 40);
-    let mut frames = Vec::new();
-    frames
-        .push(<GuillotinePacker as Packer<String>>::pack(&mut p, "a".into(), &r).expect("place a"));
-    frames
-        .push(<GuillotinePacker as Packer<String>>::pack(&mut p, "b".into(), &r).expect("place b"));
+    let frames = [
+        <GuillotinePacker as Packer<String>>::pack(&mut p, "a".into(), &r).expect("place a"),
+        <GuillotinePacker as Packer<String>>::pack(&mut p, "b".into(), &r).expect("place b"),
+    ];
     assert_eq!(frames.len(), 2);
 
     let s0 = expanded_slot(&frames[0].frame, cfg.texture_padding, cfg.texture_extrusion);

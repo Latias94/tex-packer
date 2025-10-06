@@ -573,8 +573,8 @@ impl AppWindow {
 
         // Pre-warm any textures that want updates (not strictly needed here since we update on pack)
         for pp in &mut self.state.previews {
-            if let Ok(res) = self.imgui.renderer.update_texture(&*pp.tex) {
-                res.apply_to(&mut *pp.tex);
+            if let Ok(res) = self.imgui.renderer.update_texture(&pp.tex) {
+                res.apply_to(&mut pp.tex);
             }
         }
 
@@ -871,9 +871,7 @@ impl AppWindow {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
-        self.imgui
-            .platform
-            .prepare_render_with_ui(&ui, &self.window);
+        self.imgui.platform.prepare_render_with_ui(ui, &self.window);
         let draw_data = self.imgui.context.render();
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -995,21 +993,12 @@ impl ApplicationHandler for App {
 }
 
 fn is_image_path(path: &Path) -> bool {
-    match path
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_ascii_lowercase())
-    {
-        Some(ext)
-            if matches!(
-                ext.as_str(),
-                "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tif" | "tiff"
-            ) =>
-        {
-            true
-        }
-        _ => false,
-    }
+    matches!(
+        path.extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase()),
+        Some(ext) if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tif" | "tiff")
+    )
 }
 
 fn main() {

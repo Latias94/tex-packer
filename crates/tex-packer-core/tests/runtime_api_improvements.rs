@@ -163,14 +163,14 @@ fn test_runtime_stats() {
     assert!(stats.total_used_area > 0);
     assert!(stats.occupancy > 0.0);
     assert!(stats.occupancy <= 1.0);
-    
+
     // Used area should be at least the sum of texture areas (plus padding)
     let min_used = 64 * 64 + 32 * 32;
     assert!(stats.total_used_area >= min_used as u64);
 
     // Free area should be positive
     assert!(stats.total_free_area > 0);
-    
+
     // Total should equal used + free (approximately, due to padding)
     let total_accounted = stats.total_used_area + stats.total_free_area;
     assert!(total_accounted <= stats.total_page_area);
@@ -184,10 +184,10 @@ fn test_runtime_stats_summary() {
     let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
 
     sess.append("a".into(), 64, 64).expect("append");
-    
+
     let stats = sess.stats();
     let summary = stats.summary();
-    
+
     // Summary should contain key information
     assert!(summary.contains("Pages:"));
     assert!(summary.contains("Textures:"));
@@ -230,14 +230,14 @@ fn test_runtime_stats_waste_percentage() {
     let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
 
     sess.append("a".into(), 32, 32).expect("append");
-    
+
     let stats = sess.stats();
     let waste = stats.waste_percentage();
-    
+
     // Waste should be between 0 and 100
     assert!(waste >= 0.0);
     assert!(waste <= 100.0);
-    
+
     // With a small texture in a large atlas, waste should be significant
     assert!(waste > 50.0);
 }
@@ -260,7 +260,7 @@ fn test_evict_by_key_with_reuse() {
     // Add new texture with same size - should reuse space
     let (page_b, _) = sess.append("sprite_b".into(), 64, 64).expect("append B");
     assert_eq!(sess.texture_count(), 1);
-    
+
     // Should be on the same page
     assert_eq!(page_a, page_b);
 }
@@ -313,9 +313,8 @@ fn test_multiple_pages_stats() {
     let stats = sess.stats();
     assert!(stats.num_pages > 1, "Should have multiple pages");
     assert_eq!(stats.num_textures, 10);
-    
+
     // Total page area should be num_pages * page_size
     let expected_total = (128 * 128) as u64 * stats.num_pages as u64;
     assert_eq!(stats.total_page_area, expected_total);
 }
-

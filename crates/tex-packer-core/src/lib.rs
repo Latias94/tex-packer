@@ -29,6 +29,7 @@ pub mod model;
 pub mod packer;
 pub mod pipeline;
 pub mod runtime;
+pub mod runtime_atlas;
 
 pub use config::*;
 pub use error::*;
@@ -47,7 +48,8 @@ pub mod prelude {
     };
     pub use crate::model::{Atlas, Frame, Meta, Page, PackStats, Rect};
     pub use crate::pipeline::LayoutItem;
-    pub use crate::runtime::{AtlasSession, RuntimeStrategy, ShelfPolicy};
+    pub use crate::runtime::{AtlasSession, RuntimeStats, RuntimeStrategy, ShelfPolicy};
+    pub use crate::runtime_atlas::{RuntimeAtlas, UpdateRegion};
     pub use crate::{
         pack_images, pack_layout, pack_layout_items, InputImage, OutputPage, PackOutput,
     };

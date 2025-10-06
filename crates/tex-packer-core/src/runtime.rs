@@ -15,8 +15,62 @@ pub enum ShelfPolicy {
     FirstFit,
 }
 
+/// Runtime statistics for an atlas session.
+#[derive(Debug, Clone)]
+pub struct RuntimeStats {
+    /// Number of pages currently allocated.
+    pub num_pages: usize,
+    /// Number of textures currently in the atlas.
+    pub num_textures: usize,
+    /// Total area of all pages (width * height * num_pages).
+    pub total_page_area: u64,
+    /// Total area occupied by textures (sum of all used slots).
+    pub total_used_area: u64,
+    /// Total free area available for new textures.
+    pub total_free_area: u64,
+    /// Occupancy ratio: used_area / total_page_area (0.0 to 1.0).
+    pub occupancy: f64,
+    /// Number of free rectangles/segments (fragmentation indicator).
+    pub num_free_rects: usize,
+}
+
+impl RuntimeStats {
+    /// Returns a human-readable summary of the statistics.
+    pub fn summary(&self) -> String {
+        format!(
+            "Pages: {}, Textures: {}, Occupancy: {:.2}%, Free: {} px² ({} rects), Used: {} px²",
+            self.num_pages,
+            self.num_textures,
+            self.occupancy * 100.0,
+            self.total_free_area,
+            self.num_free_rects,
+            self.total_used_area,
+        )
+    }
+
+    /// Returns the fragmentation ratio (higher = more fragmented).
+    /// Calculated as: num_free_rects / (total_free_area / 1000)
+    /// Lower is better (fewer, larger free blocks).
+    pub fn fragmentation(&self) -> f64 {
+        if self.total_free_area == 0 {
+            0.0
+        } else {
+            (self.num_free_rects as f64) / ((self.total_free_area as f64) / 1000.0).max(1.0)
+        }
+    }
+
+    /// Returns the waste percentage (0.0 to 100.0).
+    pub fn waste_percentage(&self) -> f64 {
+        if self.total_page_area > 0 {
+            (self.total_free_area as f64 / self.total_page_area as f64) * 100.0
+        } else {
+            0.0
+        }
+    }
+}
+
 pub struct AtlasSession {
-    cfg: PackerConfig,
+    pub(crate) cfg: PackerConfig,
     _strategy: RuntimeStrategy,
     pages: Vec<RtPage>,
     next_id: usize,
@@ -170,6 +224,104 @@ impl AtlasSession {
             background_color: None,
         };
         Atlas { pages, meta }
+    }
+
+    /// Find a frame by its key.
+    /// Returns the page ID and a reference to the frame if found.
+    pub fn get_frame(&self, key: &str) -> Option<(usize, &Frame<String>)> {
+        for page in &self.pages {
+            if let Some((_slot, _rot, frame)) = page.used.get(key) {
+                return Some((page.id, frame));
+            }
+        }
+        None
+    }
+
+    /// Evict a texture by its key without needing to know the page ID.
+    /// Returns true if the texture was found and evicted.
+    pub fn evict_by_key(&mut self, key: &str) -> bool {
+        for page in &mut self.pages {
+            if let Some((slot, _rot, _frame)) = page.used.remove(key) {
+                page.add_free(slot);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a texture with the given key exists.
+    pub fn contains(&self, key: &str) -> bool {
+        self.pages.iter().any(|p| p.used.contains_key(key))
+    }
+
+    /// Get all texture keys currently in the atlas.
+    pub fn keys(&self) -> Vec<&str> {
+        self.pages
+            .iter()
+            .flat_map(|p| p.used.keys().map(|k| k.as_str()))
+            .collect()
+    }
+
+    /// Get the number of textures currently in the atlas.
+    pub fn texture_count(&self) -> usize {
+        self.pages.iter().map(|p| p.used.len()).sum()
+    }
+
+    /// Get runtime statistics about the atlas session.
+    pub fn stats(&self) -> RuntimeStats {
+        let num_pages = self.pages.len();
+        let num_textures = self.texture_count();
+
+        let mut total_used_area = 0u64;
+        let mut total_free_area = 0u64;
+        let mut num_free_rects = 0;
+
+        for page in &self.pages {
+            // Calculate used area
+            for (slot, _rot, _frame) in page.used.values() {
+                total_used_area += (slot.w as u64) * (slot.h as u64);
+            }
+
+            // Calculate free area
+            match &page.mode {
+                RtMode::Guillotine { free, .. } => {
+                    num_free_rects += free.len();
+                    for rect in free {
+                        total_free_area += (rect.w as u64) * (rect.h as u64);
+                    }
+                }
+                RtMode::Shelf { shelves, .. } => {
+                    for shelf in shelves {
+                        num_free_rects += shelf.segs.len();
+                        for (_, w) in &shelf.segs {
+                            total_free_area += (*w as u64) * (shelf.h as u64);
+                        }
+                    }
+                }
+            }
+        }
+
+        let total_page_area = if num_pages > 0 {
+            (self.cfg.max_width as u64) * (self.cfg.max_height as u64) * (num_pages as u64)
+        } else {
+            0
+        };
+
+        let occupancy = if total_page_area > 0 {
+            total_used_area as f64 / total_page_area as f64
+        } else {
+            0.0
+        };
+
+        RuntimeStats {
+            num_pages,
+            num_textures,
+            total_page_area,
+            total_used_area,
+            total_free_area,
+            occupancy,
+            num_free_rects,
+        }
     }
 
     fn make_frame(&self, key: &str, w: u32, h: u32, slot: &Rect, rotated: bool) -> Frame<String> {

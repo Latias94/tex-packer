@@ -65,6 +65,7 @@ fn main() -> anyhow::Result<()> {
         mr_reference: false,
         auto_mr_ref_time_ms_threshold: None,
         auto_mr_ref_input_threshold: None,
+        transparent_policy: tex_packer_core::config::TransparentPolicy::Keep,
     };
 
     let mut candidates: Vec<(String, PackerConfig)> = Vec::new();

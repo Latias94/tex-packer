@@ -70,18 +70,19 @@ impl SkylinePacker {
         }
     }
 
-    fn find_skyline(&self, w: u32, h: u32) -> Option<(usize, Rect)> {
+    fn find_skyline(&self, w: u32, h: u32) -> Option<(usize, Rect, bool)> {
         match self.heuristic {
             SkylineHeuristic::BottomLeft => self.find_bottom_left(w, h),
             SkylineHeuristic::MinWaste => self.find_min_waste(w, h),
         }
     }
 
-    fn find_bottom_left(&self, w: u32, h: u32) -> Option<(usize, Rect)> {
+    fn find_bottom_left(&self, w: u32, h: u32) -> Option<(usize, Rect, bool)> {
         let mut best_bottom = u32::MAX;
         let mut best_width = u32::MAX;
         let mut best_index: Option<usize> = None;
         let mut best_rect = Rect::new(0, 0, 0, 0);
+        let mut best_rot = false;
 
         for i in 0..self.skylines.len() {
             if let Some(r) = self.can_put(i, w, h) {
@@ -92,6 +93,7 @@ impl SkylinePacker {
                     best_width = self.skylines[i].w;
                     best_index = Some(i);
                     best_rect = r;
+                    best_rot = false;
                 }
             }
             if self.config.allow_rotation {
@@ -103,11 +105,12 @@ impl SkylinePacker {
                         best_width = self.skylines[i].w;
                         best_index = Some(i);
                         best_rect = r;
+                        best_rot = true;
                     }
                 }
             }
         }
-        best_index.map(|idx| (idx, best_rect))
+        best_index.map(|idx| (idx, best_rect, best_rot))
     }
 
     fn wasted_area_for(&self, start: usize, r: &Rect) -> u32 {
@@ -127,11 +130,12 @@ impl SkylinePacker {
         area
     }
 
-    fn find_min_waste(&self, w: u32, h: u32) -> Option<(usize, Rect)> {
+    fn find_min_waste(&self, w: u32, h: u32) -> Option<(usize, Rect, bool)> {
         let mut best_waste = u32::MAX;
         let mut best_bottom = u32::MAX;
         let mut best_index: Option<usize> = None;
         let mut best_rect = Rect::new(0, 0, 0, 0);
+        let mut best_rot = false;
         for i in 0..self.skylines.len() {
             if let Some(r) = self.can_put(i, w, h) {
                 let waste = self.wasted_area_for(i, &r);
@@ -140,6 +144,7 @@ impl SkylinePacker {
                     best_bottom = r.bottom();
                     best_index = Some(i);
                     best_rect = r;
+                    best_rot = false;
                 }
             }
             if self.config.allow_rotation {
@@ -150,11 +155,12 @@ impl SkylinePacker {
                         best_bottom = r.bottom();
                         best_index = Some(i);
                         best_rect = r;
+                        best_rot = true;
                     }
                 }
             }
         }
-        best_index.map(|idx| (idx, best_rect))
+        best_index.map(|idx| (idx, best_rect, best_rot))
     }
 
     fn split(&mut self, index: usize, rect: &Rect) {
@@ -197,37 +203,58 @@ impl SkylinePacker {
     }
 
     fn merge(&mut self) {
-        // Optimized merge: single pass instead of repeated Vec::remove
-        // Old implementation: O(n²) due to Vec::remove in loop
-        // New implementation: O(n) with single pass
-
-        if self.skylines.len() <= 1 {
+        // Correctness-first merge: merge only adjacent nodes with same y and contiguous x.
+        if self.skylines.is_empty() {
             return;
         }
-
-        let mut write_idx = 0;
-        let mut read_idx = 1;
-
-        while read_idx < self.skylines.len() {
-            // Check if current node can be merged with the previous written node
-            if self.skylines[write_idx].y == self.skylines[read_idx].y {
-                // Merge: extend the width of the node at write_idx
-                self.skylines[write_idx].w = self.skylines[write_idx]
-                    .w
-                    .saturating_add(self.skylines[read_idx].w);
-                // Don't advance write_idx, continue checking next nodes for merging
-            } else {
-                // Can't merge, move to next write position
-                write_idx += 1;
-                if write_idx != read_idx {
-                    self.skylines[write_idx] = self.skylines[read_idx];
+        let mut merged: Vec<SkylineNode> = Vec::with_capacity(self.skylines.len());
+        for node in self.skylines.iter().copied() {
+            if let Some(last) = merged.last_mut() {
+                let last_right_ex = last.x + last.w; // exclusive right
+                if last.y == node.y && last_right_ex == node.x {
+                    last.w = last.w.saturating_add(node.w);
+                    continue;
                 }
             }
-            read_idx += 1;
+            merged.push(node);
         }
+        self.skylines = merged;
+    }
+}
 
-        // Truncate to keep only the merged nodes
-        self.skylines.truncate(write_idx + 1);
+#[cfg(test)]
+impl SkylinePacker {
+    pub fn debug_nodes(&self) -> Vec<(u32, u32, u32)> {
+        self.skylines.iter().map(|n| (n.x, n.y, n.w)).collect()
+    }
+    pub fn debug_set_nodes(&mut self, nodes: &[(u32, u32, u32)]) {
+        self.skylines = nodes
+            .iter()
+            .copied()
+            .map(|(x, y, w)| SkylineNode { x, y, w })
+            .collect();
+    }
+    pub fn debug_merge(&mut self) {
+        self.merge();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_does_not_bridge_gaps() {
+        let cfg = PackerConfig::default();
+        let mut p = SkylinePacker::new(cfg);
+        // Two nodes at y=10 separated by a raised segment at y=20
+        p.debug_set_nodes(&[(0, 10, 10), (12, 20, 2), (14, 10, 6)]);
+        p.debug_merge();
+        let nodes = p.debug_nodes();
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0], (0, 10, 10));
+        assert_eq!(nodes[1], (12, 20, 2));
+        assert_eq!(nodes[2], (14, 10, 6));
     }
 }
 
@@ -244,8 +271,8 @@ impl<K: Clone> Packer<K> for SkylinePacker {
     }
 
     fn pack(&mut self, key: K, rect: &Rect) -> Option<Frame<K>> {
-        let mut w = rect.w + self.config.texture_padding + self.config.texture_extrusion * 2;
-        let mut h = rect.h + self.config.texture_padding + self.config.texture_extrusion * 2;
+        let w = rect.w + self.config.texture_padding + self.config.texture_extrusion * 2;
+        let h = rect.h + self.config.texture_padding + self.config.texture_extrusion * 2;
 
         // Try waste map first
         if let Some(wm) = &mut self.waste {
@@ -274,11 +301,10 @@ impl<K: Clone> Packer<K> for SkylinePacker {
             }
         }
 
-        if let Some((i, place)) = self.find_skyline(w, h) {
+        if let Some((i, place, rotated)) = self.find_skyline(w, h) {
             self.split(i, &place);
             self.merge();
             self.add_waste_areas(i, &place);
-            let rotated = w != place.w;
 
             // Compute content frame size (post-rotation)
             let (fw, fh) = if rotated {
@@ -305,33 +331,6 @@ impl<K: Clone> Packer<K> for SkylinePacker {
                 source_size: (rect.w, rect.h),
             })
         } else {
-            // try rotated if not allowed above
-            if !self.config.allow_rotation {
-                std::mem::swap(&mut w, &mut h);
-                if let Some((i, place)) = self.find_skyline(w, h) {
-                    self.split(i, &place);
-                    self.merge();
-                    self.add_waste_areas(i, &place);
-                    let rotated = true;
-                    let (fw, fh) = (rect.h, rect.w);
-                    let pad_half = self.config.texture_padding / 2;
-                    let off = self.config.texture_extrusion + pad_half;
-                    let frame = Rect::new(
-                        place.x.saturating_add(off),
-                        place.y.saturating_add(off),
-                        fw,
-                        fh,
-                    );
-                    return Some(Frame {
-                        key,
-                        frame,
-                        rotated,
-                        trimmed: false,
-                        source: *rect,
-                        source_size: (rect.w, rect.h),
-                    });
-                }
-            }
             None
         }
     }

@@ -32,6 +32,7 @@ fn run(n: usize, mr_ref: bool, seed: u64) {
         mr_reference: mr_ref,
         auto_mr_ref_time_ms_threshold: None,
         auto_mr_ref_input_threshold: None,
+        transparent_policy: tex_packer_core::config::TransparentPolicy::Keep,
     };
 
     let mut p = MaxRectsPacker::new(cfg.clone(), MaxRectsHeuristic::BestAreaFit);

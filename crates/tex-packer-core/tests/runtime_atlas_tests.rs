@@ -121,6 +121,37 @@ fn test_runtime_atlas_evict_by_key_with_clear() {
 }
 
 #[test]
+fn test_runtime_atlas_evict_clears_extrude_area() {
+    // Configure extrusion and padding, so reserved slot is larger than content
+    let cfg = PackerConfig::builder()
+        .with_max_dimensions(256, 256)
+        .texture_extrusion(2)
+        .texture_padding(2)
+        .build();
+
+    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+
+    // Add a small solid image
+    let img = RgbaImage::from_pixel(16, 16, Rgba([200, 50, 50, 255]));
+    let (page_id, frame, _) = atlas
+        .append_with_image("solid".into(), &img)
+        .expect("append");
+
+    // A pixel just left to the content should be part of extrude zone, thus colored now
+    let x_left = frame.frame.x - 1; // within extrude since extrude=2
+    let y = frame.frame.y; // on top edge
+    let before = atlas.get_page_image(page_id).unwrap().get_pixel(x_left, y);
+    assert_ne!(before, &Rgba([0, 0, 0, 0]));
+
+    // Evict and clear; extrude area should be reset to background
+    let region = atlas.evict_by_key_with_clear("solid", true);
+    assert!(region.is_some());
+
+    let after = atlas.get_page_image(page_id).unwrap().get_pixel(x_left, y);
+    assert_eq!(after, &Rgba([0, 0, 0, 0]));
+}
+
+#[test]
 fn test_runtime_atlas_background_color() {
     let cfg = PackerConfig::builder()
         .with_max_dimensions(128, 128)

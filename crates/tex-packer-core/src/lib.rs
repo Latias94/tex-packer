@@ -21,6 +21,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod compositing;
 pub mod config;
 pub mod error;
 pub mod export;

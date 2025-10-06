@@ -35,6 +35,7 @@ fn cfg_base() -> PackerConfig {
         mr_reference: false,
         auto_mr_ref_time_ms_threshold: None,
         auto_mr_ref_input_threshold: None,
+        transparent_policy: tex_packer_core::config::TransparentPolicy::Keep,
     }
 }
 

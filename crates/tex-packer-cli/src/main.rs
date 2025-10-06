@@ -151,6 +151,9 @@ struct PackArgs {
     /// Use waste map for skyline
     #[arg(long, default_value_t = false, help_heading = "Heuristics")]
     use_waste_map: bool,
+    /// Policy for fully transparent images when trim is on: keep | one_by_one | skip
+    #[arg(long, default_value = "keep", help_heading = "Image Processing")]
+    transparent_policy: String,
     /// Use reference-accurate MaxRects split/prune (SplitFreeNode style)
     #[arg(long, default_value_t = false, help_heading = "Auto/Portfolio")]
     mr_reference: bool,
@@ -255,6 +258,10 @@ fn run_pack(cli: &PackArgs, show_progress: bool) -> anyhow::Result<()> {
             mr_reference: false,
             auto_mr_ref_time_ms_threshold: cli.auto_mr_ref_time_threshold,
             auto_mr_ref_input_threshold: cli.auto_mr_ref_input_threshold,
+            transparent_policy: cli
+                .transparent_policy
+                .parse()
+                .unwrap_or(tex_packer_core::config::TransparentPolicy::Keep),
         });
         if cli.mr_reference {
             tmp.mr_reference = true;
@@ -287,6 +294,10 @@ fn run_pack(cli: &PackArgs, show_progress: bool) -> anyhow::Result<()> {
             mr_reference: cli.mr_reference,
             auto_mr_ref_time_ms_threshold: cli.auto_mr_ref_time_threshold,
             auto_mr_ref_input_threshold: cli.auto_mr_ref_input_threshold,
+            transparent_policy: cli
+                .transparent_policy
+                .parse()
+                .unwrap_or(tex_packer_core::config::TransparentPolicy::Keep),
         }
     };
 
@@ -905,6 +916,7 @@ struct YamlConfig {
     mr_reference: Option<bool>,
     auto_mr_ref_time_ms_threshold: Option<u64>,
     auto_mr_ref_input_threshold: Option<usize>,
+    transparent_policy: Option<String>,
 }
 
 impl YamlConfig {
@@ -987,6 +999,9 @@ impl YamlConfig {
         }
         if let Some(v) = self.auto_mr_ref_input_threshold {
             cfg.auto_mr_ref_input_threshold = Some(v);
+        }
+        if let Some(v) = self.transparent_policy {
+            cfg.transparent_policy = v.parse().unwrap_or(cfg.transparent_policy);
         }
         cfg
     }

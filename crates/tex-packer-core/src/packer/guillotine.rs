@@ -208,11 +208,16 @@ impl<K: Clone> Packer<K> for GuillotinePacker {
             self.place(idx, &place);
             let pad_half = self.config.texture_padding / 2;
             let off = self.config.texture_extrusion + pad_half;
+            let (fw, fh) = if rotated {
+                (rect.h, rect.w)
+            } else {
+                (rect.w, rect.h)
+            };
             let frame_rect = Rect::new(
                 place.x.saturating_add(off),
                 place.y.saturating_add(off),
-                rect.w,
-                rect.h,
+                fw,
+                fh,
             );
             Some(Frame {
                 key,

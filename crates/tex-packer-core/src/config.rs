@@ -243,6 +243,10 @@ pub struct PackerConfig {
     /// Auto-mode: enable mr_reference when inputs >= this count. None => use default heuristic.
     #[serde(default)]
     pub auto_mr_ref_input_threshold: Option<usize>,
+
+    /// Policy for fully transparent images (effective when `trim=true`).
+    #[serde(default = "default_transparent_policy")]
+    pub transparent_policy: TransparentPolicy,
 }
 
 impl Default for PackerConfig {
@@ -273,6 +277,7 @@ impl Default for PackerConfig {
             mr_reference: false,
             auto_mr_ref_time_ms_threshold: None,
             auto_mr_ref_input_threshold: None,
+            transparent_policy: default_transparent_policy(),
         }
     }
 }
@@ -356,6 +361,9 @@ fn default_sort_order() -> SortOrder {
 }
 fn default_parallel() -> bool {
     false
+}
+fn default_transparent_policy() -> TransparentPolicy {
+    TransparentPolicy::Keep
 }
 
 /// Builder for `PackerConfig` for ergonomic construction.
@@ -467,6 +475,10 @@ impl PackerConfigBuilder {
         self.cfg.use_waste_map = v;
         self
     }
+    pub fn transparent_policy(mut self, v: TransparentPolicy) -> Self {
+        self.cfg.transparent_policy = v;
+        self
+    }
     pub fn build(self) -> PackerConfig {
         self.cfg
     }
@@ -476,5 +488,28 @@ impl PackerConfig {
     /// Create a fluent builder for `PackerConfig`.
     pub fn builder() -> PackerConfigBuilder {
         PackerConfigBuilder::new()
+    }
+}
+/// Policy for fully transparent images when trimming is enabled and no opaque pixel is found.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TransparentPolicy {
+    /// Keep original dimensions (status quo)
+    Keep,
+    /// Reduce to a 1x1 transparent pixel
+    OneByOne,
+    /// Skip this input entirely
+    Skip,
+}
+
+impl FromStr for TransparentPolicy {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "keep" => Ok(Self::Keep),
+            "one_by_one" | "1x1" | "onebyone" => Ok(Self::OneByOne),
+            "skip" => Ok(Self::Skip),
+            _ => Err(()),
+        }
     }
 }

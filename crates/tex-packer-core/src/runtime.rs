@@ -255,6 +255,16 @@ impl AtlasSession {
         None
     }
 
+    /// Find the reserved slot rectangle for a texture key (pre-offset area including padding/extrude).
+    pub fn get_reserved_slot(&self, key: &str) -> Option<(usize, Rect)> {
+        for page in &self.pages {
+            if let Some((slot, _rot, _frame)) = page.used.get(key) {
+                return Some((page.id, *slot));
+            }
+        }
+        None
+    }
+
     /// Evict a texture by its key without needing to know the page ID.
     /// Returns true if the texture was found and evicted.
     pub fn evict_by_key(&mut self, key: &str) -> bool {
@@ -319,10 +329,11 @@ impl AtlasSession {
                 RtMode::Skyline {
                     border, skylines, ..
                 } => {
-                    // Approximate free area as the area above skyline
+                    // Approximate free area as the area above skyline using exclusive bottom
                     num_free_rects += skylines.len();
+                    let bottom_ex = border.y + border.h; // exclusive bottom
                     for node in skylines {
-                        let height_above = border.bottom().saturating_sub(node.y);
+                        let height_above = bottom_ex.saturating_sub(node.y);
                         total_free_area += (node.w as u64) * (height_above as u64);
                     }
                 }

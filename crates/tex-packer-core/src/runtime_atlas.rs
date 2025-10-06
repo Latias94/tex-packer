@@ -101,15 +101,17 @@ impl RuntimeAtlas {
         key: &str,
         clear: bool,
     ) -> Option<UpdateRegion> {
-        // Get frame info before evicting
-        let frame_info = if clear {
-            self.session.get_frame(key).map(|(_, frame)| UpdateRegion {
-                page_id,
-                x: frame.frame.x,
-                y: frame.frame.y,
-                width: frame.frame.w,
-                height: frame.frame.h,
-            })
+        // Get reserved slot before evicting (covers padding/extrude)
+        let slot_region = if clear {
+            self.session
+                .get_reserved_slot(key)
+                .map(|(pid, slot)| UpdateRegion {
+                    page_id: pid,
+                    x: slot.x,
+                    y: slot.y,
+                    width: slot.w,
+                    height: slot.h,
+                })
         } else {
             None
         };
@@ -118,7 +120,7 @@ impl RuntimeAtlas {
         if self.session.evict(page_id, key) {
             // Clear pixels if requested
             if clear {
-                if let Some(region) = frame_info {
+                if let Some(region) = slot_region {
                     self.clear_region(region);
                     return Some(region);
                 }
@@ -131,26 +133,24 @@ impl RuntimeAtlas {
 
     /// Evict a texture by key and optionally clear its region.
     pub fn evict_by_key_with_clear(&mut self, key: &str, clear: bool) -> Option<UpdateRegion> {
-        // Get frame info before evicting
-        let frame_info = if clear {
+        // Get reserved slot before evicting
+        let slot_region = if clear {
             self.session
-                .get_frame(key)
-                .map(|(page_id, frame)| UpdateRegion {
+                .get_reserved_slot(key)
+                .map(|(page_id, slot)| UpdateRegion {
                     page_id,
-                    x: frame.frame.x,
-                    y: frame.frame.y,
-                    width: frame.frame.w,
-                    height: frame.frame.h,
+                    x: slot.x,
+                    y: slot.y,
+                    width: slot.w,
+                    height: slot.h,
                 })
         } else {
             None
         };
 
-        // Evict from session
         if self.session.evict_by_key(key) {
-            // Clear pixels if requested
             if clear {
-                if let Some(region) = frame_info {
+                if let Some(region) = slot_region {
                     self.clear_region(region);
                     return Some(region);
                 }
@@ -229,39 +229,42 @@ impl RuntimeAtlas {
         let dst_x = frame.frame.x;
         let dst_y = frame.frame.y;
 
-        // Handle rotation
-        if frame.rotated {
-            // Rotate 90 degrees clockwise
-            for y in 0..src_h {
-                for x in 0..src_w {
-                    let src_pixel = image.get_pixel(x, y);
-                    let dst_x_rot = dst_x + y;
-                    let dst_y_rot = dst_y + (src_w - 1 - x);
-                    if dst_x_rot < page.width() && dst_y_rot < page.height() {
-                        page.put_pixel(dst_x_rot, dst_y_rot, *src_pixel);
-                    }
-                }
-            }
-        } else {
-            // No rotation, direct copy
-            for y in 0..src_h {
-                for x in 0..src_w {
-                    let src_pixel = image.get_pixel(x, y);
-                    let dst_x_pos = dst_x + x;
-                    let dst_y_pos = dst_y + y;
-                    if dst_x_pos < page.width() && dst_y_pos < page.height() {
-                        page.put_pixel(dst_x_pos, dst_y_pos, *src_pixel);
-                    }
-                }
-            }
+        // Reuse core compositing (with extrusion and optional outlines)
+        let extrude = self.session.cfg.texture_extrusion;
+        let outlines = self.session.cfg.texture_outlines;
+        crate::compositing::blit_rgba(
+            image,
+            page,
+            dst_x,
+            dst_y,
+            0,
+            0,
+            src_w,
+            src_h,
+            frame.rotated,
+            extrude,
+            outlines,
+        );
+
+        // Return the minimal update region including extrusion
+        let start_x = dst_x.saturating_sub(extrude);
+        let start_y = dst_y.saturating_sub(extrude);
+        let mut width = frame.frame.w + extrude.saturating_mul(2);
+        let mut height = frame.frame.h + extrude.saturating_mul(2);
+        // Clamp to page bounds
+        if start_x + width > page.width() {
+            width = page.width() - start_x;
+        }
+        if start_y + height > page.height() {
+            height = page.height() - start_y;
         }
 
         Ok(UpdateRegion {
             page_id,
-            x: dst_x,
-            y: dst_y,
-            width: frame.frame.w,
-            height: frame.frame.h,
+            x: start_x,
+            y: start_y,
+            width,
+            height,
         })
     }
 

@@ -5,7 +5,7 @@ use crate::model::{Atlas, Frame, Meta, Page, Rect};
 use crate::packer::{
     guillotine::GuillotinePacker, maxrects::MaxRectsPacker, skyline::SkylinePacker, Packer,
 };
-use image::{DynamicImage, Rgba, RgbaImage};
+use image::{DynamicImage, RgbaImage};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tracing::instrument;
@@ -153,162 +153,7 @@ fn next_pow2(mut v: u32) -> u32 {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn blit_image(
-    src: &RgbaImage,
-    canvas: &mut RgbaImage,
-    dx: u32,
-    dy: u32,
-    sx: u32,
-    sy: u32,
-    sw: u32,
-    sh: u32,
-    rotated: bool,
-    extrude: u32,
-    outlines: bool,
-) {
-    let (cw, ch) = canvas.dimensions();
-    // destination (rendered) size may differ when rotated
-    let (rw, rh) = if rotated { (sh, sw) } else { (sw, sh) };
-
-    // main blit
-    for yy in 0..rh {
-        for xx in 0..rw {
-            let (ix, iy) = if rotated {
-                (sx + yy, sy + (sh - 1 - xx))
-            } else {
-                (sx + xx, sy + yy)
-            };
-            if dx + xx < cw && dy + yy < ch {
-                let px = *src.get_pixel(ix, iy);
-                canvas.put_pixel(dx + xx, dy + yy, px);
-            }
-        }
-    }
-
-    if outlines {
-        // red outline on frame bounds
-        let red = Rgba([255, 0, 0, 255]);
-        for xx in 0..rw {
-            if dx + xx < cw && dy < ch {
-                canvas.put_pixel(dx + xx, dy, red);
-            }
-            let by = dy + rh.saturating_sub(1);
-            if dx + xx < cw && by < ch {
-                canvas.put_pixel(dx + xx, by, red);
-            }
-        }
-        for yy in 0..rh {
-            if dx < cw && dy + yy < ch {
-                canvas.put_pixel(dx, dy + yy, red);
-            }
-            let rx = dx + rw.saturating_sub(1);
-            if rx < cw && dy + yy < ch {
-                canvas.put_pixel(rx, dy + yy, red);
-            }
-        }
-    }
-
-    if extrude > 0 {
-        // edges
-        for e in 1..=extrude {
-            // top row
-            if dy >= e && dy < ch {
-                for xx in 0..rw {
-                    if dx + xx < cw {
-                        let p = *canvas.get_pixel(dx + xx, dy);
-                        if dy >= e {
-                            canvas.put_pixel(dx + xx, dy - e, p);
-                        }
-                    }
-                }
-            }
-            // bottom row
-            if dy + rh - 1 < ch && dy + rh - 1 + e < ch {
-                for xx in 0..rw {
-                    if dx + xx < cw {
-                        let p = *canvas.get_pixel(dx + xx, dy + rh - 1);
-                        canvas.put_pixel(dx + xx, dy + rh - 1 + e, p);
-                    }
-                }
-            }
-            // left col
-            if dx >= e && dx < cw {
-                for yy in 0..rh {
-                    if dy + yy < ch {
-                        let p = *canvas.get_pixel(dx, dy + yy);
-                        canvas.put_pixel(dx - e, dy + yy, p);
-                    }
-                }
-            }
-            // right col
-            if dx + rw - 1 < cw && dx + rw - 1 + e < cw {
-                for yy in 0..rh {
-                    if dy + yy < ch {
-                        let p = *canvas.get_pixel(dx + rw - 1, dy + yy);
-                        canvas.put_pixel(dx + rw - 1 + e, dy + yy, p);
-                    }
-                }
-            }
-        }
-        // corners (copy the corner pixel) with bounds guards
-        let c00 = if dx < cw && dy < ch {
-            *canvas.get_pixel(dx, dy)
-        } else {
-            Rgba([0, 0, 0, 0])
-        };
-        let c10 = if dx + rw > 0 && dx + rw - 1 < cw && dy < ch {
-            *canvas.get_pixel(dx + rw - 1, dy)
-        } else {
-            Rgba([0, 0, 0, 0])
-        };
-        let c01 = if dx < cw && dy + rh > 0 && dy + rh - 1 < ch {
-            *canvas.get_pixel(dx, dy + rh - 1)
-        } else {
-            Rgba([0, 0, 0, 0])
-        };
-        let c11 = if dx + rw > 0 && dx + rw - 1 < cw && dy + rh > 0 && dy + rh - 1 < ch {
-            *canvas.get_pixel(dx + rw - 1, dy + rh - 1)
-        } else {
-            Rgba([0, 0, 0, 0])
-        };
-        if dx >= 1 && dy >= 1 {
-            for ex in 1..=extrude {
-                for ey in 1..=extrude {
-                    if dx >= ex && dy >= ey {
-                        canvas.put_pixel(dx - ex, dy - ey, c00);
-                    }
-                }
-            }
-        }
-        if dy >= 1 && dx + rw - 1 < cw {
-            for ex in 1..=extrude {
-                for ey in 1..=extrude {
-                    if dy >= ey && dx + rw - 1 + ex < cw {
-                        canvas.put_pixel(dx + rw - 1 + ex, dy - ey, c10);
-                    }
-                }
-            }
-        }
-        if dx >= 1 && dy + rh - 1 < ch {
-            for ex in 1..=extrude {
-                for ey in 1..=extrude {
-                    if dx >= ex && dy + rh - 1 + ey < ch {
-                        canvas.put_pixel(dx - ex, dy + rh - 1 + ey, c01);
-                    }
-                }
-            }
-        }
-        if dx + rw - 1 < cw && dy + rh - 1 < ch {
-            for ex in 1..=extrude {
-                for ey in 1..=extrude {
-                    if dx + rw - 1 + ex < cw && dy + rh - 1 + ey < ch {
-                        canvas.put_pixel(dx + rw - 1 + ex, dy + rh - 1 + ey, c11);
-                    }
-                }
-            }
-        }
-    }
-}
+// moved to compositing::blit_rgba for reuse in runtime
 
 // ---------- helpers for multi-run (auto) ----------
 
@@ -326,15 +171,30 @@ fn prepare_inputs(inputs: &[InputImage], cfg: &PackerConfig) -> Vec<Prep> {
     for inp in inputs.iter() {
         let rgba = inp.image.to_rgba8();
         let (iw, ih) = rgba.dimensions();
+        let mut push_entry = true;
         let (rect, trimmed, source) = if cfg.trim {
             let (trim_rect_opt, src_rect) = compute_trim_rect(&rgba, cfg.trim_threshold);
             match trim_rect_opt {
                 Some(r) => (Rect::new(0, 0, r.w, r.h), true, src_rect),
-                None => (Rect::new(0, 0, iw, ih), false, Rect::new(0, 0, iw, ih)),
+                None => match cfg.transparent_policy {
+                    crate::config::TransparentPolicy::Keep => {
+                        (Rect::new(0, 0, iw, ih), false, Rect::new(0, 0, iw, ih))
+                    }
+                    crate::config::TransparentPolicy::OneByOne => {
+                        (Rect::new(0, 0, 1, 1), true, Rect::new(0, 0, 1, 1))
+                    }
+                    crate::config::TransparentPolicy::Skip => {
+                        push_entry = false;
+                        (Rect::new(0, 0, 0, 0), false, Rect::new(0, 0, 0, 0))
+                    }
+                },
             }
         } else {
             (Rect::new(0, 0, iw, ih), false, Rect::new(0, 0, iw, ih))
         };
+        if !push_entry {
+            continue;
+        }
         out.push(Prep {
             key: inp.key.clone(),
             rgba,
@@ -437,40 +297,13 @@ fn pack_prepared(prepared: &[Prep], cfg: &PackerConfig) -> Result<PackOutput> {
             });
         }
 
-        // Compute final page size; include right/bottom reserved margin (extrude + ceil(padding/2))
-        let pad_half = cfg.texture_padding / 2;
-        let pad_rem = cfg.texture_padding - pad_half; // ceil division remainder
-        let right_extra = cfg.texture_extrusion + pad_rem;
-        let bottom_extra = cfg.texture_extrusion + pad_rem;
-
-        let mut page_w = if cfg.force_max_dimensions {
-            cfg.max_width
-        } else {
-            0
-        };
-        let mut page_h = if cfg.force_max_dimensions {
-            cfg.max_height
-        } else {
-            0
-        };
-        for f in &frames {
-            page_w = page_w.max(f.frame.right() + 1 + right_extra + cfg.border_padding);
-            page_h = page_h.max(f.frame.bottom() + 1 + bottom_extra + cfg.border_padding);
-        }
-        if cfg.power_of_two {
-            page_w = next_pow2(page_w.max(1));
-            page_h = next_pow2(page_h.max(1));
-        }
-        if cfg.square {
-            let m = page_w.max(page_h);
-            page_w = m;
-            page_h = m;
-        }
+        // Compute final page size via helper to keep logic consistent across APIs
+        let (page_w, page_h) = compute_page_size(&frames, cfg);
 
         let mut canvas = RgbaImage::new(page_w, page_h);
         for f in &frames {
             if let Some(prep) = prep_map.get(&f.key) {
-                blit_image(
+                crate::compositing::blit_rgba(
                     &prep.rgba,
                     &mut canvas,
                     f.frame.x,
@@ -743,33 +576,7 @@ pub fn pack_layout<K: Into<String>>(
         }
 
         // Compute page size same as pack_prepared
-        let pad_half = cfg.texture_padding / 2;
-        let pad_rem = cfg.texture_padding - pad_half;
-        let right_extra = cfg.texture_extrusion + pad_rem;
-        let bottom_extra = cfg.texture_extrusion + pad_rem;
-        let mut page_w = if cfg.force_max_dimensions {
-            cfg.max_width
-        } else {
-            0
-        };
-        let mut page_h = if cfg.force_max_dimensions {
-            cfg.max_height
-        } else {
-            0
-        };
-        for f in &frames {
-            page_w = page_w.max(f.frame.right() + 1 + right_extra + cfg.border_padding);
-            page_h = page_h.max(f.frame.bottom() + 1 + bottom_extra + cfg.border_padding);
-        }
-        if cfg.power_of_two {
-            page_w = next_pow2(page_w.max(1));
-            page_h = next_pow2(page_h.max(1));
-        }
-        if cfg.square {
-            let m = page_w.max(page_h);
-            page_w = m;
-            page_h = m;
-        }
+        let (page_w, page_h) = compute_page_size(&frames, &cfg);
 
         let page = Page {
             id: page_id,
@@ -919,33 +726,7 @@ pub fn pack_layout_items<K: Into<String>>(
             });
         }
 
-        let pad_half = cfg.texture_padding / 2;
-        let pad_rem = cfg.texture_padding - pad_half;
-        let right_extra = cfg.texture_extrusion + pad_rem;
-        let bottom_extra = cfg.texture_extrusion + pad_rem;
-        let mut page_w = if cfg.force_max_dimensions {
-            cfg.max_width
-        } else {
-            0
-        };
-        let mut page_h = if cfg.force_max_dimensions {
-            cfg.max_height
-        } else {
-            0
-        };
-        for f in &frames {
-            page_w = page_w.max(f.frame.right() + 1 + right_extra + cfg.border_padding);
-            page_h = page_h.max(f.frame.bottom() + 1 + bottom_extra + cfg.border_padding);
-        }
-        if cfg.power_of_two {
-            page_w = next_pow2(page_w.max(1));
-            page_h = next_pow2(page_h.max(1));
-        }
-        if cfg.square {
-            let m = page_w.max(page_h);
-            page_w = m;
-            page_h = m;
-        }
+        let (page_w, page_h) = compute_page_size(&frames, &cfg);
 
         let page = Page {
             id: page_id,
@@ -976,4 +757,32 @@ pub fn pack_layout_items<K: Into<String>>(
         pages: atlas_pages,
         meta,
     })
+}
+
+/// Compute final page dimensions given placed frames and config.
+fn compute_page_size(frames: &[Frame], cfg: &PackerConfig) -> (u32, u32) {
+    if cfg.force_max_dimensions {
+        // When forced, return exactly the configured dimensions, ignoring pow2/square adjustments.
+        return (cfg.max_width, cfg.max_height);
+    }
+    let pad_half = cfg.texture_padding / 2;
+    let pad_rem = cfg.texture_padding - pad_half;
+    let right_extra = cfg.texture_extrusion + pad_rem;
+    let bottom_extra = cfg.texture_extrusion + pad_rem;
+    let mut page_w = 0u32;
+    let mut page_h = 0u32;
+    for f in frames {
+        page_w = page_w.max(f.frame.right() + 1 + right_extra + cfg.border_padding);
+        page_h = page_h.max(f.frame.bottom() + 1 + bottom_extra + cfg.border_padding);
+    }
+    if cfg.power_of_two {
+        page_w = next_pow2(page_w.max(1));
+        page_h = next_pow2(page_h.max(1));
+    }
+    if cfg.square {
+        let m = page_w.max(page_h);
+        page_w = m;
+        page_h = m;
+    }
+    (page_w, page_h)
 }

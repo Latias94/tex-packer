@@ -1,0 +1,1 @@
+Irregular blotches (rects/ellipses) with varying alpha to stress trimming & packing quality.

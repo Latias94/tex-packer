@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.com/schemas/tex-packer-atlas-array.schema.json",
+  "title": "tex-packer atlas (array)",
+  "type": "object",
+  "required": ["pages", "meta"],
+  "properties": {
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "width", "height", "frames"],
+        "properties": {
+          "id": { "type": "integer", "minimum": 0 },
+          "width": { "type": "integer", "minimum": 0 },
+          "height": { "type": "integer", "minimum": 0 },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["key", "frame", "rotated", "trimmed", "spriteSourceSize", "sourceSize"],
+              "properties": {
+                "key": { "type": "string" },
+                "frame": { "$ref": "#/definitions/rect" },
+                "rotated": { "type": "boolean" },
+                "trimmed": { "type": "boolean" },
+                "spriteSourceSize": { "$ref": "#/definitions/rect" },
+                "sourceSize": { "$ref": "#/definitions/size" },
+                "pivot": { "$ref": "#/definitions/vec2" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "meta": { "$ref": "#/definitions/meta" }
+  },
+  "definitions": {
+    "rect": {
+      "type": "object",
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "w": { "type": "integer", "minimum": 0 },
+        "h": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "size": {
+      "type": "object",
+      "required": ["w", "h"],
+      "properties": {
+        "w": { "type": "integer", "minimum": 0 },
+        "h": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["schema_version", "app", "version", "format", "scale", "power_of_two", "square", "max_dim", "padding", "extrude", "allow_rotation", "trim_mode"],
+      "properties": {
+        "schema_version": { "type": "string" },
+        "app": { "type": "string" },
+        "version": { "type": "string" },
+        "format": { "type": "string" },
+        "scale": { "type": "number" },
+        "power_of_two": { "type": "boolean" },
+        "square": { "type": "boolean" },
+        "max_dim": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 },
+        "padding": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 },
+        "extrude": { "type": "integer", "minimum": 0 },
+        "allow_rotation": { "type": "boolean" },
+        "trim_mode": { "type": "string" },
+        "background_color": { "type": ["array", "null"], "items": { "type": "integer", "minimum": 0, "maximum": 255 }, "minItems": 4, "maxItems": 4 }
+      }
+    }
+  }
+}

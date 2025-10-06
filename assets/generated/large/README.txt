@@ -1,0 +1,1 @@
+Large near-limit canvas with sparse content to test trim + page sizing.

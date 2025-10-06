@@ -1,0 +1,19 @@
+{{!-- Spine .atlas text format --}}
+{{#each pages}}
+{{this.image}}
+size: {{this.size.w}}, {{this.size.h}}
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+
+  {{#each this.sprites}}
+{{this.name}}
+  rotate: {{#if this.rotated}}true{{else}}false{{/if}}
+  xy: {{this.frame.x}}, {{this.frame.y}}
+  size: {{this.frame.w}}, {{this.frame.h}}
+  orig: {{this.source_size.w}}, {{this.source_size.h}}
+  offset: {{this.sprite_source_size.x}}, {{this.sprite_source_size.y}}
+  index: -1
+  {{/each}}
+
+{{/each}}

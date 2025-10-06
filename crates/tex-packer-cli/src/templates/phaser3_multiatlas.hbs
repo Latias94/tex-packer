@@ -1,0 +1,19 @@
+{
+  "textures": [
+  {{#each pages}}
+    {
+      "image": "{{this.image}}",
+      "format": "RGBA8888",
+      "size": { "w": {{this.size.w}}, "h": {{this.size.h}} },
+      "scale": 1,
+      "frames": [
+      {{#each this.sprites}}
+        {"filename":"{{this.name}}","rotated":{{this.rotated}},"trimmed":{{this.trimmed}},"frame":{"x":{{this.frame.x}},"y":{{this.frame.y}},"w":{{this.frame.w}},"h":{{this.frame.h}}},"spriteSourceSize":{"x":{{this.sprite_source_size.x}},"y":{{this.sprite_source_size.y}},"w":{{this.sprite_source_size.w}},"h":{{this.sprite_source_size.h}}},"sourceSize":{"w":{{this.source_size.w}},"h":{{this.source_size.h}}},"pivot":{"x":{{this.pivot.x}},"y":{{this.pivot.y}}}}
+        {{#unless @last}},{{/unless}}
+      {{/each}}
+      ]
+    }
+    {{#unless @last}},{{/unless}}
+  {{/each}}
+  ]
+}

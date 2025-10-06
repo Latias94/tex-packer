@@ -1,0 +1,1 @@
+Basic opaque rectangles with varied sizes.

@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "crates/tex-packer-core",
+    "crates/tex-packer-cli",
+    "crates/tex-packer-gui",
+]
+resolver = "2"
+

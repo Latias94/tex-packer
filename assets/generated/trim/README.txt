@@ -1,0 +1,1 @@
+Images with transparent borders and internal colored/soft shapes to test trimming & thresholds.

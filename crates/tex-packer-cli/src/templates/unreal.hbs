@@ -1,0 +1,17 @@
+{
+  "atlases": [
+  {{#each pages}}
+    {
+      "image": "{{this.image}}",
+      "size": { "w": {{this.size.w}}, "h": {{this.size.h}} },
+      "sprites": [
+      {{#each this.sprites}}
+        {"name":"{{this.name}}","rect":{"x":{{this.frame.x}},"y":{{this.frame.y}},"w":{{this.frame.w}},"h":{{this.frame.h}}},"rotated":{{this.rotated}},"trimmed":{{this.trimmed}}}
+        {{#unless @last}},{{/unless}}
+      {{/each}}
+      ]
+    }
+    {{#unless @last}},{{/unless}}
+  {{/each}}
+  ]
+}

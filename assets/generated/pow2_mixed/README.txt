@@ -1,0 +1,1 @@
+Power-of-two opaque blocks (various sizes).

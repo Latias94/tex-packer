@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.com/schemas/tex-packer-atlas-hash.schema.json",
+  "title": "tex-packer atlas (hash)",
+  "type": "object",
+  "required": ["frames", "meta"],
+  "properties": {
+    "frames": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["frame", "rotated", "trimmed", "spriteSourceSize", "sourceSize", "pivot", "page", "pageSize"],
+        "properties": {
+          "frame": { "$ref": "#/definitions/rect" },
+          "rotated": { "type": "boolean" },
+          "trimmed": { "type": "boolean" },
+          "spriteSourceSize": { "$ref": "#/definitions/rect" },
+          "sourceSize": { "$ref": "#/definitions/size" },
+          "pivot": { "$ref": "#/definitions/vec2" },
+          "page": { "type": "integer", "minimum": 0 },
+          "pageSize": { "$ref": "#/definitions/size" }
+        }
+      }
+    },
+    "meta": { "$ref": "#/definitions/meta" }
+  },
+  "definitions": {
+    "rect": {
+      "type": "object",
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "w": { "type": "integer", "minimum": 0 },
+        "h": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "size": {
+      "type": "object",
+      "required": ["w", "h"],
+      "properties": {
+        "w": { "type": "integer", "minimum": 0 },
+        "h": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "vec2": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["schema_version", "app", "version", "format", "scale", "power_of_two", "square", "max_dim", "padding", "extrude", "allow_rotation", "trim_mode"],
+      "properties": {
+        "schema_version": { "type": "string" },
+        "app": { "type": "string" },
+        "version": { "type": "string" },
+        "format": { "type": "string" },
+        "scale": { "type": "number" },
+        "power_of_two": { "type": "boolean" },
+        "square": { "type": "boolean" },
+        "max_dim": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 },
+        "padding": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 },
+        "extrude": { "type": "integer", "minimum": 0 },
+        "allow_rotation": { "type": "boolean" },
+        "trim_mode": { "type": "string" },
+        "background_color": { "type": ["array", "null"], "items": { "type": "integer", "minimum": 0, "maximum": 255 }, "minItems": 4, "maxItems": 4 }
+      }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+Very thin horizontal/vertical bars to stress skyline/rotation.

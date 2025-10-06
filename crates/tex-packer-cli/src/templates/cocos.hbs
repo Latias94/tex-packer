@@ -1,0 +1,12 @@
+{
+  "frames": {
+  {{#each pages}}
+    {{#each this.sprites}}
+    "{{this.name}}": {"frame":{"x":{{this.frame.x}},"y":{{this.frame.y}},"w":{{this.frame.w}},"h":{{this.frame.h}}},"rotated":{{this.rotated}},"trimmed":{{this.trimmed}},"spriteSourceSize":{"x":{{this.sprite_source_size.x}},"y":{{this.sprite_source_size.y}},"w":{{this.sprite_source_size.w}},"h":{{this.sprite_source_size.h}}},"sourceSize":{"w":{{this.source_size.w}},"h":{{this.source_size.h}}},"pivot":{"x":{{this.pivot.x}},"y":{{this.pivot.y}}},"page":{{@../index}},"pageSize":{"w":{{@root.pages.[@../index].size.w}},"h":{{@root.pages.[@../index].size.h}}}}
+    {{#unless @last}},{{/unless}}
+    {{/each}}
+    {{#unless @last}},{{/unless}}
+  {{/each}}
+  },
+  "meta": {"app":"{{meta.app}}","version":"{{meta.version}}","format":"{{meta.format}}","scale":{{meta.scale}}}
+}

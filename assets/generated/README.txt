@@ -1,0 +1,1 @@
+Generated test image sets: basic, thin, trim, irregular, large, pow2_mixed.

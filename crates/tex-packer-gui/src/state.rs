@@ -2,30 +2,10 @@
 
 use crate::presets::PackerPreset;
 use crate::stats::PackStats;
-use dear_imgui_rs::texture::TextureData;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use tex_packer_core::prelude::*;
 use tracing::{error, info};
-
-/// Preview page with texture
-pub struct PreviewPage {
-    pub tex: Box<TextureData>,
-    pub width: u32,
-    pub height: u32,
-}
-
-impl Default for PreviewPage {
-    fn default() -> Self {
-        let mut tex = TextureData::new();
-        tex.create(dear_imgui_rs::texture::TextureFormat::RGBA32, 1, 1);
-        tex.set_data(&[0x00, 0x00, 0x00, 0xFF]);
-        Self {
-            tex,
-            width: 1,
-            height: 1,
-        }
-    }
-}
 
 /// Main application state
 pub struct AppState {
@@ -45,7 +25,6 @@ pub struct AppState {
 
     // Result
     pub result: Option<PackOutput>,
-    pub previews: Vec<PreviewPage>,
     pub stats: Option<PackStats>,
 
     // UI state
@@ -54,12 +33,56 @@ pub struct AppState {
     pub fit_to_window: bool,
     pub zoom: f32,
     pub show_advanced: bool,
+    pub overlay_show_bounds: bool,
+    pub overlay_show_names: bool,
+    pub advanced_tab: AdvancedTab,
+    pub pan: (f32, f32),
+    pub bg_checkerboard: bool,
+    pub bg_checker_size: f32,
+    pub pixel_filter: PixelFilter,
+    pub selected: Option<SelectedSprite>,
 
     // Errors
     pub last_error: Option<String>,
 
-    // Dock layout
-    pub layout_built: bool,
+    // Deferred actions/state
+    pub pack_requested: bool,
+    pub autopack: bool,
+    pub dirty_config: bool,
+    pub pack_in_progress: bool,
+    pub cancel_requested: bool,
+
+    // Export
+    pub export_format: ExportFormat,
+
+    // Inputs management
+    pub excluded_keys: HashSet<String>,
+    pub input_filter: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Hash,
+    Array,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdvancedTab {
+    General,
+    Algorithm,
+    Sorting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PixelFilter {
+    Linear,
+    Nearest,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectedSprite {
+    pub key: String,
+    pub page_index: usize,
 }
 
 impl Default for AppState {
@@ -81,7 +104,6 @@ impl Default for AppState {
             cfg,
 
             result: None,
-            previews: Vec::new(),
             stats: None,
 
             selected_page: 0,
@@ -89,9 +111,27 @@ impl Default for AppState {
             fit_to_window: true,
             zoom: 1.0,
             show_advanced: false,
+            overlay_show_bounds: true,
+            overlay_show_names: false,
+            advanced_tab: AdvancedTab::General,
+            pan: (0.0, 0.0),
+            bg_checkerboard: true,
+            bg_checker_size: 16.0,
+            pixel_filter: PixelFilter::Linear,
+            selected: None,
 
             last_error: None,
-            layout_built: false,
+
+            pack_requested: false,
+            autopack: false,
+            dirty_config: false,
+            pack_in_progress: false,
+            cancel_requested: false,
+
+            export_format: ExportFormat::Hash,
+
+            excluded_keys: HashSet::new(),
+            input_filter: String::new(),
         }
     }
 }
@@ -114,12 +154,14 @@ impl AppState {
             self.selected_preset_idx = preset_idx;
             self.is_custom_preset = false;
             info!("Applied preset: {}", preset.name);
+            self.dirty_config = true;
         }
     }
 
     /// Mark config as custom (user modified)
     pub fn mark_custom(&mut self) {
         self.is_custom_preset = true;
+        self.dirty_config = true;
     }
 
     /// Get current preset
@@ -139,6 +181,7 @@ impl AppState {
             self.cfg.max_width = w;
             self.cfg.max_height = h;
             self.selected_size_idx = size_idx;
+            self.dirty_config = true;
         }
     }
 
@@ -167,6 +210,7 @@ impl AppState {
 
     fn load_inputs_from_paths(&mut self, paths: &[PathBuf]) -> anyhow::Result<()> {
         self.inputs.clear();
+        self.excluded_keys.clear();
         for path in paths {
             if path.is_file() && is_image_path(path) {
                 let key = path
@@ -179,11 +223,32 @@ impl AppState {
             }
         }
         info!("Loaded {} images (files)", self.inputs.len());
+        self.dirty_config = true;
+        Ok(())
+    }
+
+    /// Public helper used by drag&drop to load arbitrary files.
+    pub fn handle_dropped_paths(&mut self, paths: &[PathBuf]) -> anyhow::Result<()> {
+        // If a folder is dropped, set as input_dir and load from it.
+        let mut files: Vec<PathBuf> = Vec::new();
+        for p in paths {
+            if p.is_dir() {
+                self.input_dir = Some(p.clone());
+                self.load_inputs()?;
+                return Ok(());
+            } else if p.is_file() {
+                files.push(p.clone());
+            }
+        }
+        if !files.is_empty() {
+            self.load_inputs_from_paths(&files)?;
+        }
         Ok(())
     }
 
     pub fn load_inputs(&mut self) -> anyhow::Result<()> {
         self.inputs.clear();
+        self.excluded_keys.clear();
         let Some(dir) = &self.input_dir else {
             return Ok(());
         };
@@ -205,12 +270,12 @@ impl AppState {
             }
         }
         info!("Loaded {} images", count);
+        self.dirty_config = true;
         Ok(())
     }
 
     pub fn clear_result(&mut self) {
         self.result = None;
-        self.previews.clear();
         self.stats = None;
         self.selected_page = 0;
     }
@@ -240,28 +305,10 @@ impl AppState {
             Ok(out) => {
                 let pack_time_ms = start.elapsed().as_millis() as u64;
 
-                // Create previews
-                let mut previews = Vec::with_capacity(out.pages.len());
-                for p in &out.pages {
-                    let mut tex = TextureData::new();
-                    tex.create(
-                        dear_imgui_rs::texture::TextureFormat::RGBA32,
-                        p.rgba.width() as i32,
-                        p.rgba.height() as i32,
-                    );
-                    tex.set_data(p.rgba.as_raw());
-                    previews.push(PreviewPage {
-                        tex,
-                        width: p.rgba.width(),
-                        height: p.rgba.height(),
-                    });
-                }
-
                 // Calculate stats
                 let stats = PackStats::from_output(&out, num_images, pack_time_ms);
                 info!("{}", stats.status_string());
 
-                self.previews = previews;
                 self.stats = Some(stats);
                 self.result = Some(out);
             }
@@ -292,8 +339,11 @@ impl AppState {
             }
         }
 
-        // Write json (hash)
-        let json = tex_packer_core::to_json_hash(&result.atlas);
+        // Write json (hash/array)
+        let json = match self.export_format {
+            ExportFormat::Hash => tex_packer_core::to_json_hash(&result.atlas),
+            ExportFormat::Array => tex_packer_core::to_json_array(&result.atlas),
+        };
         let json_path = outdir.join(format!("{name}.json"));
         if let Err(e) = std::fs::write(&json_path, serde_json::to_string_pretty(&json).unwrap()) {
             self.set_error(format!("Failed writing {:?}: {e}", json_path));
@@ -312,4 +362,3 @@ fn is_image_path(path: &std::path::Path) -> bool {
         Some(ext) if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tif" | "tiff")
     )
 }
-

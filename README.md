@@ -5,7 +5,7 @@ A modern, deterministic texture atlas packer for Rust. Ships both a core library
 - Crates
   - `tex-packer-core`: pure library (no fs side effects). Packs in-memory images into atlases and returns pages + metadata. wasm-friendly design.
   - `tex-packer-cli`: command-line tool built on the core. Handles I/O, encoding, logging, and exporters.
-  - `tex-packer-gui`: desktop GUI built with dear-imgui-rs + wgpu + winit; load folder, configure, preview, and export.
+- `tex-packer-gui`: desktop GUI built with egui/eframe (wgpu); load folder, configure, preview, and export.
 
 - Algorithms
   - Skyline: BottomLeft, MinWaste (+ optional Waste Map)
@@ -44,6 +44,8 @@ CLI:
 
 - Install: `cargo install --path crates/tex-packer-cli`
 - Pack: `tex-packer pack <input_dir> --out out --name atlas`
+- Metadata formats: `--metadata json-array` (alias: `json`) | `json-hash` | `plist` | `template`
+  - For `template`: use `--engine unity|godot|phaser3|phaser3_single|spine|cocos|unreal` or provide `--template <file.hbs>`
 - Quality preset: `tex-packer pack assets/kenney-ui-pack --algorithm auto --auto-mode quality --time-budget 500 --parallel --metadata plist`
   - Note: For `--parallel` to take effect, build the CLI with `--features parallel` (e.g., `cargo run -p tex-packer-cli --features parallel -- ...`).
 - Templates: `tex-packer template assets/kenney-ui-pack --engine unity --out out`
@@ -56,6 +58,10 @@ GUI:
 
 - Run from repo: `cargo run -p tex-packer-gui`
 - Pick input/output folders, adjust config, Pack, and Export.
+
+Screenshots (crates.io compatible):
+
+![GUI Overview](https://raw.githubusercontent.com/Latias94/tex-packer/main/screenshots/gui-overview.png)
 
 Library:
 
@@ -152,6 +158,5 @@ Active development. Algorithms and exporters are in good shape; auto presets and
 Notes:
 - Times are for relative comparison; use your target hardware to calibrate. The ranking trends hold between debug and release.
 - The generated sets include a 1‑px border and large, centered numeric labels to simplify visual inspection of atlases (overlaps/bleeding/rotation).
-
 
 

@@ -3,6 +3,22 @@ name = "tex-packer-cli"
 version = "0.1.0"
 edition = "2021"
 readme = "README.md"
+description = "Command-line interface for tex-packer: pack folders of images into texture atlases (PNG + JSON/Plist/templates)."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Latias94/tex-packer"
+homepage = "https://github.com/Latias94/tex-packer"
+keywords = ["cli", "texture", "atlas", "packer", "sprites"]
+categories = ["command-line-utilities", "multimedia::images", "graphics"]
+authors = ["Latias94"]
+exclude = [
+    "Cargo.toml.orig",
+    "tests/*",
+    "benches/*",
+    "target/*",
+]
+
+[badges]
+maintenance = { status = "actively-developed" }
 
 [dependencies]
 tex-packer-core = { path = "../tex-packer-core" }

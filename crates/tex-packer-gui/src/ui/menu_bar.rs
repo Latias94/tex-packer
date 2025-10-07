@@ -1,76 +1,96 @@
-//! Menu bar UI
+//! Menu bar UI (egui)
 
 use crate::state::AppState;
-use dear_imgui_rs::*;
+use eframe::egui;
 
-pub fn render(ui: &Ui, state: &mut AppState) {
-    if let Some(_mb) = ui.begin_main_menu_bar() {
-        render_file_menu(ui, state);
-        render_presets_menu(ui, state);
-        render_view_menu(ui, state);
-        render_help_menu(ui);
-        _mb.end();
-    }
-}
-
-fn render_file_menu(ui: &Ui, state: &mut AppState) {
-    if let Some(_m) = ui.begin_menu("File") {
-        if ui.menu_item("Open Folder...") {
-            state.pick_input_dir();
-        }
-        if ui.menu_item("Open Files...") {
-            state.pick_files();
-        }
-        ui.separator();
-        if ui.menu_item("Set Output Folder...") {
-            state.pick_output_dir();
-        }
-        ui.separator();
-        let export_enabled = state.result.is_some();
-        if export_enabled && ui.menu_item("Export") {
-            state.do_export();
-        }
-        ui.separator();
-        if ui.menu_item("Exit") {
-            std::process::exit(0);
-        }
-        _m.end();
-    }
-}
-
-fn render_presets_menu(ui: &Ui, state: &mut AppState) {
-    if let Some(_m) = ui.begin_menu("Presets") {
-        let preset_count = state.presets.len();
-        for idx in 0..preset_count {
-            let label = format!("{} {}", state.presets[idx].icon, state.presets[idx].name);
-            if ui.menu_item(&label) {
-                state.apply_preset(idx);
+pub fn render(ui: &mut egui::Ui, state: &mut AppState) {
+    egui::MenuBar::new().ui(ui, |ui| {
+        // File
+        ui.menu_button("File", |ui| {
+            if ui.button("Open Folder...").clicked() {
+                state.pick_input_dir();
+                ui.close();
             }
-        }
-        _m.end();
-    }
-}
+            if ui.button("Open Files...").clicked() {
+                state.pick_files();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Set Output Folder...").clicked() {
+                state.pick_output_dir();
+                ui.close();
+            }
+            ui.separator();
+            let export_enabled = state.result.is_some();
+            if ui
+                .add_enabled(export_enabled, egui::Button::new("Export"))
+                .clicked()
+            {
+                state.do_export();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Exit").clicked() {
+                std::process::exit(0);
+            }
+        });
 
-fn render_view_menu(ui: &Ui, state: &mut AppState) {
-    if let Some(_m) = ui.begin_menu("View") {
-        ui.menu_item_toggle("Fit to Window", None::<&str>, &mut state.fit_to_window, true);
+        // Presets
+        ui.menu_button("Presets", |ui| {
+            let count = state.presets.len();
+            for idx in 0..count {
+                let label = {
+                    let p = &state.presets[idx];
+                    format!("{} {}", p.icon, p.name)
+                };
+                if ui.button(label).clicked() {
+                    state.apply_preset(idx);
+                    ui.close();
+                }
+            }
+        });
+
+        // View
+        ui.menu_button("View", |ui| {
+            ui.toggle_value(&mut state.fit_to_window, "Fit to Window");
+            ui.separator();
+            if ui.button("Clear Result").clicked() {
+                state.clear_result();
+                ui.close();
+            }
+            if ui.button("Clear Error").clicked() {
+                state.clear_error();
+                ui.close();
+            }
+        });
+
+        // Help
+        ui.menu_button("Help", |ui| {
+            ui.label("tex-packer GUI with egui");
+        });
+
         ui.separator();
-        if ui.menu_item("Clear Result") {
-            state.clear_result();
-        }
-        if ui.menu_item("Clear Error") {
-            state.clear_error();
-        }
-        _m.end();
-    }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let export_enabled =
+                state.result.is_some() && state.output_dir.is_some() && !state.pack_in_progress;
+            if ui
+                .add_enabled(export_enabled, egui::Button::new("Export"))
+                .clicked()
+            {
+                state.do_export();
+            }
+            ui.separator();
+            if state.pack_in_progress {
+                if ui.button("Cancel").clicked() {
+                    state.cancel_requested = true;
+                }
+                ui.add(egui::Spinner::new());
+            } else {
+                if ui.button("Pack").clicked() {
+                    state.pack_requested = true;
+                }
+            }
+            ui.toggle_value(&mut state.autopack, "Auto Pack");
+        });
+    });
 }
-
-fn render_help_menu(ui: &Ui) {
-    if let Some(_m) = ui.begin_menu("Help") {
-        if ui.menu_item("About") {
-            // Could open a modal here
-        }
-        _m.end();
-    }
-}
-

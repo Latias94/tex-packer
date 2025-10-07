@@ -266,7 +266,7 @@ impl PackerPreset {
     /// Get all available presets
     pub fn all() -> Vec<Self> {
         vec![
-            Self::quality(),    // Default
+            Self::quality(), // Default
             Self::fast(),
             Self::web_assets(),
             Self::unity_mobile(),
@@ -287,4 +287,3 @@ impl PackerPreset {
         Self::quality()
     }
 }
-

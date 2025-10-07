@@ -1,5 +1,9 @@
 # tex-packer-core
 
+[![Crates.io](https://img.shields.io/crates/v/tex-packer-core.svg)](https://crates.io/crates/tex-packer-core)
+[![Docs.rs](https://docs.rs/tex-packer-core/badge.svg)](https://docs.rs/tex-packer-core)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/Latias94/tex-packer)
+
 Core library for packing many textures into atlas pages. Provides algorithms, data model, and a pipeline to pack in-memory images and return pages + metadata for export.
 
 ## Install

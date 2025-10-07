@@ -1,5 +1,8 @@
 # tex-packer-cli
 
+[![Crates.io](https://img.shields.io/crates/v/tex-packer-cli.svg)](https://crates.io/crates/tex-packer-cli)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/Latias94/tex-packer)
+
 Command-line tool for tex-packer. Packs images from disk into atlas pages, writes PNGs and metadata (JSON/Plist/templates).
 
 ## Install
@@ -19,6 +22,13 @@ Subcommands:
 - Bench: `tex-packer bench <input> [--algorithm auto] [--auto-mode quality] [--time-budget MS]`
 
 Global flags: `[-q|--quiet] [-v|--verbose] [--progress|--no-progress]`
+
+Metadata formats:
+
+- `--metadata json-array` (alias: `json`) — JSON array layout
+- `--metadata json-hash` — JSON hash layout
+- `--metadata plist` — TexturePacker-style Plist
+- `--metadata template` — Handlebars template (use `--engine unity|godot|phaser3|phaser3_single|spine|cocos|unreal` or `--template <file.hbs>`) 
 
 Examples:
 - Pack basic: `tex-packer pack assets/kenney-ui-pack --out out --name atlas`

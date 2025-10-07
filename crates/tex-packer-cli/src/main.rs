@@ -165,7 +165,7 @@ struct PackArgs {
     auto_mr_ref_input_threshold: Option<usize>,
 
     // Export
-    /// Metadata format: json-array | json-hash | plist | template
+    /// Metadata format: json-array | json (alias) | json-hash | plist | template
     #[arg(long, default_value = "json-array", help_heading = "Export")]
     metadata: String,
     /// Built-in engine template: unity | godot | phaser3 | phaser3_single | spine | cocos | unreal
@@ -449,14 +449,21 @@ fn run_pack(cli: &PackArgs, show_progress: bool) -> anyhow::Result<()> {
     );
 
     match cli.metadata.as_str() {
-        "json-array" | "json-hash" => {
+        // Accept "json" as an alias of "json-array" to match layout-only behavior
+        "json-array" | "json" => {
             if !cli.dry_run {
                 let json_path = cli.out_dir.join(format!("{}.json", cli.name));
-                let json_value = if cli.metadata == "json-array" {
-                    tex_packer_core::to_json_array(&out.atlas)
-                } else {
-                    tex_packer_core::to_json_hash(&out.atlas)
-                };
+                let json_value = tex_packer_core::to_json_array(&out.atlas);
+                let json = serde_json::to_string_pretty(&json_value)?;
+                fs::write(&json_path, json)
+                    .with_context(|| format!("write {}", json_path.display()))?;
+                info!(?json_path, pages = out.pages.len(), "atlas written");
+            }
+        }
+        "json-hash" => {
+            if !cli.dry_run {
+                let json_path = cli.out_dir.join(format!("{}.json", cli.name));
+                let json_value = tex_packer_core::to_json_hash(&out.atlas);
                 let json = serde_json::to_string_pretty(&json_value)?;
                 fs::write(&json_path, json)
                     .with_context(|| format!("write {}", json_path.display()))?;

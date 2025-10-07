@@ -1,6 +1,6 @@
 use image::{Rgba, RgbaImage};
-use tex_packer_core::prelude::*;
 use tex_packer_core::TransparentPolicy;
+use tex_packer_core::prelude::*;
 
 #[test]
 fn test_transparent_one_by_one() {

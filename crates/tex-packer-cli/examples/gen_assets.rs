@@ -21,7 +21,7 @@ fn solid(w: u32, h: u32, c: [u8; 4]) -> RgbaImage {
 }
 
 fn random_color_opaque(rng: &mut impl Rng) -> [u8; 4] {
-    [rng.gen(), rng.gen(), rng.gen(), 255]
+    [rng.r#gen(), rng.r#gen(), rng.r#gen(), 255]
 }
 
 fn draw_rect(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, c: [u8; 4]) {
@@ -292,7 +292,7 @@ fn gen_trim_cases(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
                 (w / 2) as i32,
                 (h / 2) as i32,
                 (bw.min(bh) as f32) / 2.0,
-                [rng.gen(), rng.gen(), rng.gen()],
+                [rng.r#gen(), rng.r#gen(), rng.r#gen()],
             );
             img = soft;
         }
@@ -311,7 +311,10 @@ fn gen_trim_cases(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
         );
         save(&img, &out.join(format!("trim_{:03}.png", i)))?;
     }
-    fs::write(out.join("README.txt"), "Images with transparent borders and internal colored/soft shapes to test trimming & thresholds.")?;
+    fs::write(
+        out.join("README.txt"),
+        "Images with transparent borders and internal colored/soft shapes to test trimming & thresholds.",
+    )?;
     Ok(())
 }
 
@@ -334,7 +337,12 @@ fn gen_irregular(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
                     cy.max(0) as u32,
                     rw as u32,
                     rh as u32,
-                    [rng.gen(), rng.gen(), rng.gen(), rng.gen_range(120..=255)],
+                    [
+                        rng.r#gen(),
+                        rng.r#gen(),
+                        rng.r#gen(),
+                        rng.gen_range(120..=255),
+                    ],
                 );
             } else {
                 draw_ellipse(
@@ -343,7 +351,12 @@ fn gen_irregular(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
                     cy,
                     rw / 2.0,
                     rh / 2.0,
-                    [rng.gen(), rng.gen(), rng.gen(), rng.gen_range(120..=255)],
+                    [
+                        rng.r#gen(),
+                        rng.r#gen(),
+                        rng.r#gen(),
+                        rng.gen_range(120..=255),
+                    ],
                 );
             }
         }
@@ -352,7 +365,10 @@ fn gen_irregular(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
         draw_text_centered_scaled(&mut img, w / 2, h / 2, &label, [255, 255, 255, 255], true);
         save(&img, &out.join(format!("irregular_{:03}.png", i)))?;
     }
-    fs::write(out.join("README.txt"), "Irregular blotches (rects/ellipses) with varying alpha to stress trimming & packing quality.")?;
+    fs::write(
+        out.join("README.txt"),
+        "Irregular blotches (rects/ellipses) with varying alpha to stress trimming & packing quality.",
+    )?;
     Ok(())
 }
 

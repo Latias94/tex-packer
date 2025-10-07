@@ -129,7 +129,12 @@ fn main() -> anyhow::Result<()> {
             let cy = rng.gen_range(0..h);
             let rw = rng.gen_range(4..=w.max(4).min(64));
             let rh = rng.gen_range(4..=h.max(4).min(64));
-            let color = Rgba([rng.gen(), rng.gen(), rng.gen(), rng.gen_range(96..=255)]);
+            let color = Rgba([
+                rng.r#gen(),
+                rng.r#gen(),
+                rng.r#gen(),
+                rng.gen_range(96..=255),
+            ]);
             // Mix between rect and ellipse
             if rng.gen_bool(0.5) {
                 let x1 = cx.saturating_sub(rw / 2);

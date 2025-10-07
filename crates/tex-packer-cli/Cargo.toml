@@ -1,7 +1,7 @@
 [package]
 name = "tex-packer-cli"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 readme = "README.md"
 description = "Command-line interface for tex-packer: pack folders of images into texture atlases (PNG + JSON/Plist/templates)."
 license = "MIT OR Apache-2.0"

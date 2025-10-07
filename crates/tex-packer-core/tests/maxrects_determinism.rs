@@ -1,7 +1,7 @@
 use tex_packer_core::config::{AlgorithmFamily, MaxRectsHeuristic, PackerConfig, SortOrder};
 use tex_packer_core::model::{Frame, Rect};
-use tex_packer_core::packer::maxrects::MaxRectsPacker;
 use tex_packer_core::packer::Packer;
+use tex_packer_core::packer::maxrects::MaxRectsPacker;
 
 #[allow(dead_code)]
 fn disjoint(frames: &[Frame]) -> bool {

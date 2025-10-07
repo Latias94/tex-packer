@@ -3,10 +3,10 @@ use tex_packer_core::config::{
     SkylineHeuristic, SortOrder,
 };
 use tex_packer_core::model::Rect;
+use tex_packer_core::packer::Packer;
 use tex_packer_core::packer::guillotine::GuillotinePacker;
 use tex_packer_core::packer::maxrects::MaxRectsPacker;
 use tex_packer_core::packer::skyline::SkylinePacker;
-use tex_packer_core::packer::Packer;
 
 fn cfg_base() -> PackerConfig {
     PackerConfig {

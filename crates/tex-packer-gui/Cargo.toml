@@ -1,7 +1,7 @@
 [package]
 name = "tex-packer-gui"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 readme = "README.md"
 description = "Desktop GUI for tex-packer built with egui/eframe (wgpu): load images, configure, preview, and export texture atlases."
 license = "MIT OR Apache-2.0"

@@ -2,8 +2,8 @@ use rand::{Rng, SeedableRng};
 use std::time::Instant;
 use tex_packer_core::config::{AlgorithmFamily, MaxRectsHeuristic, PackerConfig, SortOrder};
 use tex_packer_core::model::Rect;
-use tex_packer_core::packer::maxrects::MaxRectsPacker;
 use tex_packer_core::packer::Packer;
+use tex_packer_core::packer::maxrects::MaxRectsPacker;
 
 fn run(n: usize, mr_ref: bool, seed: u64) {
     let cfg = PackerConfig {

@@ -1,7 +1,7 @@
 [package]
 name = "tex-packer-core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 readme = "README.md"
 description = "Core algorithms and API for packing images into texture atlases (Skyline / MaxRects / Guillotine). Returns pages (RGBA) and metadata (JSON/Plist/templates)."
 license = "MIT OR Apache-2.0"

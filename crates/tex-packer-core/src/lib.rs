@@ -52,6 +52,6 @@ pub mod prelude {
     pub use crate::runtime::{AtlasSession, RuntimeStats, RuntimeStrategy, ShelfPolicy};
     pub use crate::runtime_atlas::{RuntimeAtlas, UpdateRegion};
     pub use crate::{
-        pack_images, pack_layout, pack_layout_items, InputImage, OutputPage, PackOutput,
+        InputImage, OutputPage, PackOutput, pack_images, pack_layout, pack_layout_items,
     };
 }

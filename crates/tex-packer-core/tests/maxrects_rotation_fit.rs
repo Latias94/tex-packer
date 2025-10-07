@@ -1,7 +1,7 @@
 use tex_packer_core::config::{AlgorithmFamily, MaxRectsHeuristic, PackerConfig};
 use tex_packer_core::model::Rect;
-use tex_packer_core::packer::maxrects::MaxRectsPacker;
 use tex_packer_core::packer::Packer;
+use tex_packer_core::packer::maxrects::MaxRectsPacker;
 
 #[test]
 fn maxrects_rotates_when_only_rotated_fits() {

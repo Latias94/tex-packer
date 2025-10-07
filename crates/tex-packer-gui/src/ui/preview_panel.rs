@@ -2,8 +2,8 @@
 
 use crate::state::AppState;
 use eframe::egui;
-use eframe::egui::epaint::StrokeKind;
 use eframe::egui::CornerRadius;
+use eframe::egui::epaint::StrokeKind;
 
 pub fn render(
     ctx: &egui::Context,

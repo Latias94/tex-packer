@@ -1,7 +1,7 @@
 use tex_packer_core::config::{AlgorithmFamily, GuillotineChoice, GuillotineSplit, PackerConfig};
 use tex_packer_core::model::Rect;
-use tex_packer_core::packer::guillotine::GuillotinePacker;
 use tex_packer_core::packer::Packer;
+use tex_packer_core::packer::guillotine::GuillotinePacker;
 
 #[test]
 fn guillotine_rotates_when_only_rotated_fits() {

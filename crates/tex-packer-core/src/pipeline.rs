@@ -3,7 +3,7 @@ use crate::config::{AlgorithmFamily, AutoMode, SortOrder};
 use crate::error::{Result, TexPackerError};
 use crate::model::{Atlas, Frame, Meta, Page, Rect};
 use crate::packer::{
-    guillotine::GuillotinePacker, maxrects::MaxRectsPacker, skyline::SkylinePacker, Packer,
+    Packer, guillotine::GuillotinePacker, maxrects::MaxRectsPacker, skyline::SkylinePacker,
 };
 use image::{DynamicImage, RgbaImage};
 use std::collections::{HashMap, HashSet};

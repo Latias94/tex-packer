@@ -1,7 +1,7 @@
 use image::{DynamicImage, RgbaImage};
 use tex_packer_core::config::{AlgorithmFamily, PackerConfig};
 use tex_packer_core::error::TexPackerError;
-use tex_packer_core::{pack_images, pack_layout, InputImage};
+use tex_packer_core::{InputImage, pack_images, pack_layout};
 
 /// Test zero-sized atlas dimensions
 #[test]

@@ -1,6 +1,6 @@
 use image::{DynamicImage, Rgba, RgbaImage};
 use tex_packer_core::config::{AlgorithmFamily, AutoMode, SortOrder};
-use tex_packer_core::{pack_images, InputImage, PackerConfig};
+use tex_packer_core::{InputImage, PackerConfig, pack_images};
 
 fn solid_image(w: u32, h: u32, rgba: [u8; 4]) -> DynamicImage {
     let mut img = RgbaImage::new(w, h);

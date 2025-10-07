@@ -1,7 +1,7 @@
 use tex_packer_core::config::{PackerConfig, SkylineHeuristic};
 use tex_packer_core::model::Rect;
-use tex_packer_core::packer::skyline::SkylinePacker;
 use tex_packer_core::packer::Packer;
+use tex_packer_core::packer::skyline::SkylinePacker;
 
 #[test]
 fn skyline_rotates_when_only_rotated_fits() {

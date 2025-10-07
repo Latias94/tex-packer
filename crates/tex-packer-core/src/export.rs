@@ -1,6 +1,6 @@
 use crate::model::Atlas;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Serialize the whole `Atlas` as a JSON object `{ pages, meta }` (array-of-pages style).
 /// Suitable for generic tooling and simple consumption.

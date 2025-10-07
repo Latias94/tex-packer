@@ -1,7 +1,7 @@
 use tex_packer_core::config::{AlgorithmFamily, PackerConfig, SkylineHeuristic, SortOrder};
 use tex_packer_core::model::{Frame, Rect};
-use tex_packer_core::packer::skyline::SkylinePacker;
 use tex_packer_core::packer::Packer;
+use tex_packer_core::packer::skyline::SkylinePacker;
 
 fn area_of_frames(frames: &[Frame]) -> u64 {
     frames

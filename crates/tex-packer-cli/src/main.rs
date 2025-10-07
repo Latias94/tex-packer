@@ -12,7 +12,7 @@ use tex_packer_core::config::{
     AlgorithmFamily, AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic,
     SkylineHeuristic, SortOrder,
 };
-use tex_packer_core::{pack_images, InputImage, PackerConfig};
+use tex_packer_core::{InputImage, PackerConfig, pack_images};
 use tracing::{error, info};
 use walkdir::WalkDir;
 

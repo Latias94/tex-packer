@@ -14,7 +14,9 @@ pub enum TexPackerError {
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
-    #[error("Texture '{key}' ({width}x{height}) exceeds maximum atlas dimensions ({max_width}x{max_height})")]
+    #[error(
+        "Texture '{key}' ({width}x{height}) exceeds maximum atlas dimensions ({max_width}x{max_height})"
+    )]
     TextureTooLarge {
         key: String,
         width: u32,
@@ -23,7 +25,9 @@ pub enum TexPackerError {
         max_height: u32,
     },
 
-    #[error("Out of space: unable to fit texture '{key}' ({width}x{height}) into atlas (tried {pages_attempted} page(s))")]
+    #[error(
+        "Out of space: unable to fit texture '{key}' ({width}x{height}) into atlas (tried {pages_attempted} page(s))"
+    )]
     OutOfSpace {
         key: String,
         width: u32,
@@ -31,7 +35,9 @@ pub enum TexPackerError {
         pages_attempted: usize,
     },
 
-    #[error("Out of space: unable to fit remaining textures into atlas (placed {placed}/{total} textures)")]
+    #[error(
+        "Out of space: unable to fit remaining textures into atlas (placed {placed}/{total} textures)"
+    )]
     OutOfSpaceGeneric { placed: usize, total: usize },
 
     #[error("Nothing to pack: input list is empty")]
@@ -43,7 +49,9 @@ pub enum TexPackerError {
     #[error("Invalid dimensions: width and height must be greater than 0 (got {width}x{height})")]
     InvalidDimensions { width: u32, height: u32 },
 
-    #[error("Invalid padding configuration: border_padding ({border}) + texture_padding ({texture}) + texture_extrusion ({extrusion}) exceeds available space")]
+    #[error(
+        "Invalid padding configuration: border_padding ({border}) + texture_padding ({texture}) + texture_extrusion ({extrusion}) exceeds available space"
+    )]
     InvalidPadding {
         border: u32,
         texture: u32,

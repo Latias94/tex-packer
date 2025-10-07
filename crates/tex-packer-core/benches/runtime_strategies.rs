@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tex_packer_core::prelude::*;
 
 fn generate_textures(count: usize, min_size: u32, max_size: u32) -> Vec<(String, u32, u32)> {

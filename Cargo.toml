@@ -11,6 +11,6 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Latias94/tex-packer"
 homepage = "https://github.com/Latias94/tex-packer"
 authors = ["Latias94"]
-edition = "2021"
+edition = "2024"
 
 

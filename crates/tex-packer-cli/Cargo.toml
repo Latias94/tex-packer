@@ -21,7 +21,7 @@ exclude = [
 maintenance = { status = "actively-developed" }
 
 [dependencies]
-tex-packer-core = { path = "../tex-packer-core" }
+tex-packer-core = { path = "../tex-packer-core", version = "0.1.0" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 tracing = "0.1"

@@ -11,14 +11,14 @@ Desktop GUI for tex-packer built with egui/eframe (wgpu).
 - Uses tex-packer-core for algorithms and rendering.
 
 
-Quickstart
+## Quickstart
+
 - From repo: `cargo run -p tex-packer-gui`
 - Controls:
   - Inputs: Pick input folder; optional output folder.
   - Config: Algorithm, dimensions, padding, rotation, pow2/square, auto settings.
   - Actions: Pack to preview; Export to save PNGs and JSON (hash format).
 
-Notes
-- egui/eframe (wgpu). See repo-ref/egui for API references.
+## Notes
 - For large sets, Auto (quality) + time budget yields better single-page occupancy.
 - Wasm: GUI is desktop-focused; core compiles to wasm32-unknown-unknown.

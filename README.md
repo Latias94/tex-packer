@@ -59,8 +59,6 @@ GUI:
 - Run from repo: `cargo run -p tex-packer-gui`
 - Pick input/output folders, adjust config, Pack, and Export.
 
-Screenshots (crates.io compatible):
-
 ![GUI Overview](https://raw.githubusercontent.com/Latias94/tex-packer/main/screenshots/gui-overview.png)
 
 Library:

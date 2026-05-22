@@ -15,7 +15,7 @@ fn runtime_append_evict_reuse_space() {
     let (_page_b, b) = sess.append("B".into(), 48, 24).expect("append B");
     assert_eq!(page_a, 0);
     assert_eq!(a.frame.w, 40);
-    assert_eq!(b.frame.h, 24);
+    assert_frame_size_matches_rotation(&b, 48, 24);
 
     // Evict A, then insert C with similar size to ensure reuse
     assert!(sess.evict(page_a, "A"));
@@ -32,8 +32,28 @@ fn runtime_append_evict_reuse_space() {
     assert!(disjoint(&frames));
 
     // C should fit; not asserting exact coords, but w/h preserved
-    assert_eq!(c.frame.w, 40);
-    assert_eq!(c.frame.h, 32);
+    assert_frame_size_matches_rotation(&c, 40, 32);
+}
+
+#[test]
+fn runtime_guillotine_reports_rotated_frame_dimensions_in_atlas_orientation() {
+    let cfg = PackerConfig::builder()
+        .with_max_dimensions(256, 256)
+        .allow_rotation(true)
+        .texture_padding(2)
+        .texture_extrusion(1)
+        .build();
+    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+
+    let (page_a, _a) = sess.append("A".into(), 40, 32).expect("append A");
+    let (_page_b, b) = sess.append("B".into(), 48, 24).expect("append B");
+
+    assert_eq!(page_a, 0);
+    assert!(b.rotated, "second item should use the rotated reused slot");
+    assert_eq!(b.frame.w, 24);
+    assert_eq!(b.frame.h, 48);
+    assert_eq!(b.source, Rect::new(0, 0, 48, 24));
+    assert_eq!(b.source_size, (48, 24));
 }
 
 fn disjoint(frames: &[Frame]) -> bool {
@@ -52,4 +72,13 @@ fn disjoint(frames: &[Frame]) -> bool {
         }
     }
     true
+}
+
+fn assert_frame_size_matches_rotation(frame: &Frame, source_w: u32, source_h: u32) {
+    let expected = if frame.rotated {
+        (source_h, source_w)
+    } else {
+        (source_w, source_h)
+    };
+    assert_eq!((frame.frame.w, frame.frame.h), expected);
 }

@@ -15,6 +15,7 @@ A modern, deterministic texture atlas packer for Rust. Ships both a core library
 - Highlights
   - Multipage packing, stable sorting, auto presets (fast/quality)
   - Rotation-safe rendering, trim, padding/extrude, debug outlines
+  - Shared image/layout placement pipeline, so metadata-only and composited outputs use the same geometry path
 - Exporters: JSON (hash/array), Plist (TexturePacker style), templates (Unity/Godot/Phaser/Spine/Cocos/Unreal)
 
 ## Best Practices (Algorithm & Settings)
@@ -89,6 +90,7 @@ Active development. Algorithms and exporters are in good shape; auto presets and
 
 - Ergonomics: `PackerConfig::builder()` and a `prelude` are available in the core crate.
 - JSON meta: now includes `schema_version = "1"` for forward compatibility.
+- Core placement metadata reports frame width/height in atlas orientation; rotated frames have swapped `frame.w`/`frame.h` and keep original dimensions in `source_size`.
 
 ## Wasm
 

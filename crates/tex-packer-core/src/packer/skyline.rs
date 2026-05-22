@@ -1,5 +1,6 @@
 use super::Packer;
 use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig, SkylineHeuristic};
+use crate::geometry::PlacementGeometry;
 use crate::model::{Frame, Rect};
 
 #[derive(Clone, Copy, Debug)]
@@ -260,76 +261,34 @@ mod tests {
 
 impl<K: Clone> Packer<K> for SkylinePacker {
     fn can_pack(&self, rect: &Rect) -> bool {
-        let w = rect.w + self.config.texture_padding + self.config.texture_extrusion * 2;
-        let h = rect.h + self.config.texture_padding + self.config.texture_extrusion * 2;
+        let geometry = PlacementGeometry::new(rect, &self.config);
         if let Some(wm) = &self.waste {
-            if wm.can_fit(w, h) {
+            if wm.can_fit(geometry.reserved_w, geometry.reserved_h) {
                 return true;
             }
         }
-        self.find_skyline(w, h).is_some()
+        self.find_skyline(geometry.reserved_w, geometry.reserved_h)
+            .is_some()
     }
 
     fn pack(&mut self, key: K, rect: &Rect) -> Option<Frame<K>> {
-        let w = rect.w + self.config.texture_padding + self.config.texture_extrusion * 2;
-        let h = rect.h + self.config.texture_padding + self.config.texture_extrusion * 2;
+        let geometry = PlacementGeometry::new(rect, &self.config);
 
         // Try waste map first
         if let Some(wm) = &mut self.waste {
-            if let Some((place, rotated)) = wm.try_pack(w, h) {
-                let (fw, fh) = if rotated {
-                    (rect.h, rect.w)
-                } else {
-                    (rect.w, rect.h)
-                };
-                let pad_half = self.config.texture_padding / 2;
-                let off = self.config.texture_extrusion + pad_half;
-                let frame = Rect::new(
-                    place.x.saturating_add(off),
-                    place.y.saturating_add(off),
-                    fw,
-                    fh,
-                );
-                return Some(Frame {
-                    key,
-                    frame,
-                    rotated,
-                    trimmed: false,
-                    source: *rect,
-                    source_size: (rect.w, rect.h),
-                });
+            if let Some((place, rotated)) = wm.try_pack(geometry.reserved_w, geometry.reserved_h) {
+                return Some(geometry.frame(key, *rect, &place, rotated));
             }
         }
 
-        if let Some((i, place, rotated)) = self.find_skyline(w, h) {
+        if let Some((i, place, rotated)) =
+            self.find_skyline(geometry.reserved_w, geometry.reserved_h)
+        {
             self.split(i, &place);
             self.merge();
             self.add_waste_areas(i, &place);
 
-            // Compute content frame size (post-rotation)
-            let (fw, fh) = if rotated {
-                (rect.h, rect.w)
-            } else {
-                (rect.w, rect.h)
-            };
-            // Offset content inside the reserved slot by extrude + half padding (symmetric)
-            let pad_half = self.config.texture_padding / 2;
-            let off = self.config.texture_extrusion + pad_half;
-            let frame = Rect::new(
-                place.x.saturating_add(off),
-                place.y.saturating_add(off),
-                fw,
-                fh,
-            );
-
-            Some(Frame {
-                key,
-                frame,
-                rotated,
-                trimmed: false,
-                source: *rect,
-                source_size: (rect.w, rect.h),
-            })
+            Some(geometry.frame(key, *rect, &place, rotated))
         } else {
             None
         }

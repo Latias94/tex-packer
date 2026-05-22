@@ -85,6 +85,17 @@ let cfg = PackerConfig::builder()
 
 Metadata schema:
 - `meta.schema_version` is currently "1" for JSON outputs. Future additive fields may bump this.
+- `Frame.frame` is the placed content rectangle in atlas orientation. If `Frame.rotated` is true, `frame.w`/`frame.h` are swapped relative to `source_size`.
+
+## Architecture Notes
+
+The offline APIs share one placement pipeline:
+
+- `pack_images`, `pack_layout`, and `pack_layout_items` normalize inputs into prepared items.
+- Sorting, page creation, remaining-item iteration, page sizing, atlas metadata, and Auto candidate selection all use the same placement path.
+- Image compositing is an adapter over the placed pages, not a separate packing algorithm.
+
+Placement geometry is centralized inside the core crate. Algorithms choose reserved slots; the shared helper owns reserved-size calculation, padding/extrusion offsets, and reserved-slot-to-frame conversion. Runtime append/evict remains a separate online path, but reuses the same geometry helper where its semantics match offline placement.
 
 ## Runtime Usage
 

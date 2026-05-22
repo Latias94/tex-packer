@@ -1,5 +1,6 @@
 use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig, SkylineHeuristic};
 use crate::error::{Result, TexPackerError};
+use crate::geometry::PlacementGeometry;
 use crate::model::{Atlas, Frame, Meta, Page, Rect};
 use std::collections::HashMap;
 
@@ -165,14 +166,13 @@ impl AtlasSession {
     }
 
     pub fn append(&mut self, key: String, w: u32, h: u32) -> Result<(usize, Frame<String>)> {
-        let reserve_w = w + self.cfg.texture_extrusion * 2 + self.cfg.texture_padding;
-        let reserve_h = h + self.cfg.texture_extrusion * 2 + self.cfg.texture_padding;
+        let geometry = PlacementGeometry::from_size(w, h, &self.cfg);
         // Try existing pages
         for idx in 0..self.pages.len() {
             let (slot, rotated, id);
             {
                 let p = &self.pages[idx];
-                if let Some((s, r)) = p.choose(reserve_w, reserve_h) {
+                if let Some((s, r)) = p.choose(geometry.reserved_w, geometry.reserved_h) {
                     slot = s;
                     rotated = r;
                     id = p.id;
@@ -180,15 +180,15 @@ impl AtlasSession {
                     continue;
                 }
             }
-            let frame = self.make_frame(&key, w, h, &slot, rotated);
+            let frame = geometry.frame(key.clone(), Rect::new(0, 0, w, h), &slot, rotated);
             let p = &mut self.pages[idx];
             p.place(&key, &slot, &frame, rotated);
             return Ok((id, frame));
         }
         // Grow: add a new page and place
         let mut page = self.new_page();
-        if let Some((slot, rotated)) = page.choose(reserve_w, reserve_h) {
-            let frame = self.make_frame(&key, w, h, &slot, rotated);
+        if let Some((slot, rotated)) = page.choose(geometry.reserved_w, geometry.reserved_h) {
+            let frame = geometry.frame(key.clone(), Rect::new(0, 0, w, h), &slot, rotated);
             page.place(&key, &slot, &frame, rotated);
             let id = page.id;
             self.pages.push(page);
@@ -360,22 +360,6 @@ impl AtlasSession {
             total_free_area,
             occupancy,
             num_free_rects,
-        }
-    }
-
-    fn make_frame(&self, key: &str, w: u32, h: u32, slot: &Rect, rotated: bool) -> Frame<String> {
-        let pad_half = self.cfg.texture_padding / 2;
-        let off = self.cfg.texture_extrusion + pad_half;
-        let (fw, fh) = (w, h);
-        let frame = Rect::new(slot.x + off, slot.y + off, fw, fh);
-        let source = Rect::new(0, 0, w, h);
-        Frame {
-            key: key.to_string(),
-            frame,
-            rotated,
-            trimmed: false,
-            source,
-            source_size: (w, h),
         }
     }
 }

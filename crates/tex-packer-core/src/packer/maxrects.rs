@@ -1,5 +1,6 @@
 use super::Packer;
 use crate::config::{MaxRectsHeuristic, PackerConfig};
+use crate::geometry::PlacementGeometry;
 use crate::model::{Frame, Rect};
 
 pub struct MaxRectsPacker {
@@ -354,39 +355,17 @@ fn overlap_1d(a1: u32, a2: u32, b1: u32, b2: u32) -> u32 {
 
 impl<K: Clone> Packer<K> for MaxRectsPacker {
     fn can_pack(&self, rect: &Rect) -> bool {
-        let w = rect.w + self.config.texture_padding + self.config.texture_extrusion * 2;
-        let h = rect.h + self.config.texture_padding + self.config.texture_extrusion * 2;
-        self.find_position(w, h).is_some()
+        let geometry = PlacementGeometry::new(rect, &self.config);
+        self.find_position(geometry.reserved_w, geometry.reserved_h)
+            .is_some()
     }
 
     fn pack(&mut self, key: K, rect: &Rect) -> Option<Frame<K>> {
-        let w = rect.w + self.config.texture_padding + self.config.texture_extrusion * 2;
-        let h = rect.h + self.config.texture_padding + self.config.texture_extrusion * 2;
-        if let Some((place, rotated)) = self.find_position(w, h) {
+        let geometry = PlacementGeometry::new(rect, &self.config);
+        if let Some((place, rotated)) = self.find_position(geometry.reserved_w, geometry.reserved_h)
+        {
             self.place_rect(&place);
-            // Report atlas frame rectangle in stored orientation (post-rotation dimensions),
-            // and offset content inside reserved slot by extrude + half padding (symmetric)
-            let (fw, fh) = if rotated {
-                (rect.h, rect.w)
-            } else {
-                (rect.w, rect.h)
-            };
-            let pad_half = self.config.texture_padding / 2;
-            let off = self.config.texture_extrusion + pad_half;
-            let frame = Rect::new(
-                place.x.saturating_add(off),
-                place.y.saturating_add(off),
-                fw,
-                fh,
-            );
-            Some(Frame {
-                key,
-                frame,
-                rotated,
-                trimmed: false,
-                source: *rect,
-                source_size: (rect.w, rect.h),
-            })
+            Some(geometry.frame(key, *rect, &place, rotated))
         } else {
             None
         }

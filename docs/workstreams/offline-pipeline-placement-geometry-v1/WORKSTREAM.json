@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "slug": "offline-pipeline-placement-geometry-v1",
+  "title": "Offline Pipeline And Placement Geometry Refactor",
+  "status": "complete",
+  "updated": "2026-05-22",
+  "scope_kind": "execution",
+  "problem": "Offline packing and placement geometry were shallow, duplicated modules, making cross-cutting behaviours such as dedupe hard to implement safely.",
+  "target_state": "pack_images, pack_layout, and pack_layout_items share a deep offline pipeline module, and placement geometry is owned by one crate-private module instead of repeated across algorithms.",
+  "authoritative_docs": [
+    { "role": "design", "path": "docs/workstreams/offline-pipeline-placement-geometry-v1/DESIGN.md" },
+    { "role": "execution", "path": "docs/workstreams/offline-pipeline-placement-geometry-v1/TODO.md" },
+    { "role": "milestones", "path": "docs/workstreams/offline-pipeline-placement-geometry-v1/MILESTONES.md" },
+    { "role": "gates", "path": "docs/workstreams/offline-pipeline-placement-geometry-v1/EVIDENCE_AND_GATES.md" },
+    { "role": "handoff", "path": "docs/workstreams/offline-pipeline-placement-geometry-v1/HANDOFF.md" },
+    { "role": "closeout", "path": "docs/workstreams/offline-pipeline-placement-geometry-v1/CLOSEOUT.md" }
+  ],
+  "gates": [
+    "cargo fmt --check",
+    "cargo check -p tex-packer-core",
+    "cargo nextest run -p tex-packer-core",
+    "cargo nextest run --workspace"
+  ],
+  "evidence": [
+    "Baseline before refactor: cargo nextest run -p tex-packer-core passed 91/91 on main.",
+    "Final core gate: cargo nextest run -p tex-packer-core passed 96/96.",
+    "Final workspace gate: cargo nextest run --workspace passed 96/96."
+  ],
+  "adr_refs": [],
+  "current_task": "closed",
+  "continue_policy": {
+    "default_action": "closed",
+    "notes": "The lane is complete. Split follow-on work for identical-content dedupe or unrelated GUI dead-code cleanup."
+  }
+}

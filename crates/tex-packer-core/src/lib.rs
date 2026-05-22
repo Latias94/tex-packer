@@ -26,6 +26,7 @@ pub mod config;
 pub mod error;
 pub mod export;
 pub mod export_plist;
+mod geometry;
 pub mod model;
 pub mod packer;
 pub mod pipeline;

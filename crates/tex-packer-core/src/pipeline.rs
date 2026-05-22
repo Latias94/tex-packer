@@ -6,7 +6,7 @@ use crate::packer::{
     Packer, guillotine::GuillotinePacker, maxrects::MaxRectsPacker, skyline::SkylinePacker,
 };
 use image::{DynamicImage, RgbaImage};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::Instant;
 use tracing::instrument;
 
@@ -56,11 +56,6 @@ pub fn pack_images(inputs: Vec<InputImage>, cfg: PackerConfig) -> Result<PackOut
 
     // Preprocess once
     let prepared = prepare_inputs(&inputs, &cfg);
-
-    // Auto portfolio
-    if matches!(cfg.family, AlgorithmFamily::Auto) {
-        return pack_auto(&prepared, cfg);
-    }
 
     pack_prepared(&prepared, &cfg)
 }
@@ -157,16 +152,45 @@ fn next_pow2(mut v: u32) -> u32 {
 
 // ---------- helpers for multi-run (auto) ----------
 
-struct Prep {
+struct PreparedItem<T> {
     key: String,
-    rgba: RgbaImage,
+    payload: T,
     rect: Rect,
     trimmed: bool,
     source: Rect,
     orig_size: (u32, u32),
 }
 
-fn prepare_inputs(inputs: &[InputImage], cfg: &PackerConfig) -> Vec<Prep> {
+#[derive(Clone)]
+struct PackedFrame {
+    item_index: usize,
+    frame: Frame,
+}
+
+#[derive(Clone)]
+struct PackedPage {
+    id: usize,
+    width: u32,
+    height: u32,
+    frames: Vec<PackedFrame>,
+}
+
+impl PackedPage {
+    fn public_frames(&self) -> Vec<Frame> {
+        self.frames.iter().map(|f| f.frame.clone()).collect()
+    }
+
+    fn to_page(&self) -> Page {
+        Page {
+            id: self.id,
+            width: self.width,
+            height: self.height,
+            frames: self.public_frames(),
+        }
+    }
+}
+
+fn prepare_inputs(inputs: &[InputImage], cfg: &PackerConfig) -> Vec<PreparedItem<RgbaImage>> {
     let mut out = Vec::with_capacity(inputs.len());
     for inp in inputs.iter() {
         let rgba = inp.image.to_rgba8();
@@ -195,30 +219,35 @@ fn prepare_inputs(inputs: &[InputImage], cfg: &PackerConfig) -> Vec<Prep> {
         if !push_entry {
             continue;
         }
-        out.push(Prep {
+        out.push(PreparedItem {
             key: inp.key.clone(),
-            rgba,
+            payload: rgba,
             rect,
             trimmed,
             source,
             orig_size: (iw, ih),
         });
     }
-    // stable sort per config
+
+    sort_prepared(&mut out, cfg);
+    out
+}
+
+fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], cfg: &PackerConfig) {
     match cfg.sort_order {
         SortOrder::None => {}
         SortOrder::NameAsc => {
-            out.sort_by(|a, b| a.key.cmp(&b.key));
+            prepared.sort_by(|a, b| a.key.cmp(&b.key));
         }
         SortOrder::AreaDesc => {
-            out.sort_by(|a, b| {
+            prepared.sort_by(|a, b| {
                 (b.rect.w * b.rect.h)
                     .cmp(&(a.rect.w * a.rect.h))
                     .then_with(|| a.key.cmp(&b.key))
             });
         }
         SortOrder::MaxSideDesc => {
-            out.sort_by(|a, b| {
+            prepared.sort_by(|a, b| {
                 b.rect
                     .w
                     .max(b.rect.h)
@@ -227,40 +256,42 @@ fn prepare_inputs(inputs: &[InputImage], cfg: &PackerConfig) -> Vec<Prep> {
             });
         }
         SortOrder::HeightDesc => {
-            out.sort_by(|a, b| b.rect.h.cmp(&a.rect.h).then_with(|| a.key.cmp(&b.key)));
+            prepared.sort_by(|a, b| b.rect.h.cmp(&a.rect.h).then_with(|| a.key.cmp(&b.key)));
         }
         SortOrder::WidthDesc => {
-            out.sort_by(|a, b| b.rect.w.cmp(&a.rect.w).then_with(|| a.key.cmp(&b.key)));
+            prepared.sort_by(|a, b| b.rect.w.cmp(&a.rect.w).then_with(|| a.key.cmp(&b.key)));
         }
     }
-    out
 }
 
-fn pack_prepared(prepared: &[Prep], cfg: &PackerConfig) -> Result<PackOutput> {
-    let mut pages: Vec<OutputPage> = Vec::new();
-    let mut atlas_pages: Vec<Page> = Vec::new();
+fn pack_prepared(prepared: &[PreparedItem<RgbaImage>], cfg: &PackerConfig) -> Result<PackOutput> {
+    let packed_pages = pack_prepared_pages(prepared, cfg)?;
+    Ok(build_pack_output(prepared, &packed_pages, cfg))
+}
 
-    // Map for quick lookup during compositing
-    let prep_map: HashMap<String, &Prep> = prepared.iter().map(|p| (p.key.clone(), p)).collect();
+fn pack_prepared_pages<T: Sync>(
+    prepared: &[PreparedItem<T>],
+    cfg: &PackerConfig,
+) -> Result<Vec<PackedPage>> {
+    if matches!(cfg.family, AlgorithmFamily::Auto) {
+        return pack_auto_pages(prepared, cfg.clone());
+    }
 
+    pack_pages_for_family(prepared, cfg)
+}
+
+fn pack_pages_for_family<T>(
+    prepared: &[PreparedItem<T>],
+    cfg: &PackerConfig,
+) -> Result<Vec<PackedPage>> {
+    let mut pages: Vec<PackedPage> = Vec::new();
     // Remaining indices to place (in sorted order)
     let mut remaining: Vec<usize> = (0..prepared.len()).collect();
     let mut page_id = 0usize;
 
     while !remaining.is_empty() {
-        let mut packer: Box<dyn Packer<String>> = match cfg.family {
-            AlgorithmFamily::Skyline => Box::new(SkylinePacker::new(cfg.clone())),
-            AlgorithmFamily::MaxRects => {
-                Box::new(MaxRectsPacker::new(cfg.clone(), cfg.mr_heuristic.clone()))
-            }
-            AlgorithmFamily::Guillotine => Box::new(GuillotinePacker::new(
-                cfg.clone(),
-                cfg.g_choice.clone(),
-                cfg.g_split.clone(),
-            )),
-            AlgorithmFamily::Auto => unreachable!(),
-        };
-        let mut frames: Vec<Frame> = Vec::new();
+        let mut packer = create_packer(cfg);
+        let mut frames: Vec<PackedFrame> = Vec::new();
 
         loop {
             let mut placed_any = false;
@@ -274,7 +305,10 @@ fn pack_prepared(prepared: &[Prep], cfg: &PackerConfig) -> Result<PackOutput> {
                     f.trimmed = p.trimmed;
                     f.source = p.source;
                     f.source_size = p.orig_size;
-                    frames.push(f);
+                    frames.push(PackedFrame {
+                        item_index: idx,
+                        frame: f,
+                    });
                     remove_set.insert(idx);
                     placed_any = true;
                 }
@@ -298,40 +332,82 @@ fn pack_prepared(prepared: &[Prep], cfg: &PackerConfig) -> Result<PackOutput> {
         }
 
         // Compute final page size via helper to keep logic consistent across APIs
-        let (page_w, page_h) = compute_page_size(&frames, cfg);
+        let public_frames: Vec<Frame> = frames.iter().map(|f| f.frame.clone()).collect();
+        let (page_w, page_h) = compute_page_size(&public_frames, cfg);
 
-        let mut canvas = RgbaImage::new(page_w, page_h);
-        for f in &frames {
-            if let Some(prep) = prep_map.get(&f.key) {
-                crate::compositing::blit_rgba(
-                    &prep.rgba,
-                    &mut canvas,
-                    f.frame.x,
-                    f.frame.y,
-                    prep.source.x,
-                    prep.source.y,
-                    prep.source.w,
-                    prep.source.h,
-                    f.rotated,
-                    cfg.texture_extrusion,
-                    cfg.texture_outlines,
-                );
-            }
-        }
-        let page = Page {
+        pages.push(PackedPage {
             id: page_id,
             width: page_w,
             height: page_h,
-            frames: frames.clone(),
-        };
-        pages.push(OutputPage {
-            page: page.clone(),
-            rgba: canvas,
+            frames,
         });
-        atlas_pages.push(page);
         page_id += 1;
     }
 
+    Ok(pages)
+}
+
+fn create_packer(cfg: &PackerConfig) -> Box<dyn Packer<String>> {
+    match cfg.family {
+        AlgorithmFamily::Skyline => Box::new(SkylinePacker::new(cfg.clone())),
+        AlgorithmFamily::MaxRects => {
+            Box::new(MaxRectsPacker::new(cfg.clone(), cfg.mr_heuristic.clone()))
+        }
+        AlgorithmFamily::Guillotine => Box::new(GuillotinePacker::new(
+            cfg.clone(),
+            cfg.g_choice.clone(),
+            cfg.g_split.clone(),
+        )),
+        AlgorithmFamily::Auto => unreachable!(),
+    }
+}
+
+fn build_pack_output(
+    prepared: &[PreparedItem<RgbaImage>],
+    packed_pages: &[PackedPage],
+    cfg: &PackerConfig,
+) -> PackOutput {
+    let pages = packed_pages
+        .iter()
+        .map(|packed_page| render_output_page(prepared, packed_page, cfg))
+        .collect();
+    let atlas = build_atlas(packed_pages, cfg);
+
+    PackOutput { atlas, pages }
+}
+
+fn render_output_page(
+    prepared: &[PreparedItem<RgbaImage>],
+    packed_page: &PackedPage,
+    cfg: &PackerConfig,
+) -> OutputPage {
+    let mut canvas = RgbaImage::new(packed_page.width, packed_page.height);
+    for packed_frame in &packed_page.frames {
+        let prep = &prepared[packed_frame.item_index];
+        let f = &packed_frame.frame;
+        crate::compositing::blit_rgba(
+            &prep.payload,
+            &mut canvas,
+            f.frame.x,
+            f.frame.y,
+            prep.source.x,
+            prep.source.y,
+            prep.source.w,
+            prep.source.h,
+            f.rotated,
+            cfg.texture_extrusion,
+            cfg.texture_outlines,
+        );
+    }
+
+    OutputPage {
+        page: packed_page.to_page(),
+        rgba: canvas,
+    }
+}
+
+fn build_atlas(packed_pages: &[PackedPage], cfg: &PackerConfig) -> Atlas {
+    let atlas_pages = packed_pages.iter().map(PackedPage::to_page).collect();
     let meta = Meta {
         schema_version: "1".into(),
         app: "tex-packer".into(),
@@ -347,14 +423,24 @@ fn pack_prepared(prepared: &[Prep], cfg: &PackerConfig) -> Result<PackOutput> {
         trim_mode: if cfg.trim { "trim" } else { "none" }.into(),
         background_color: None,
     };
-    let atlas = Atlas {
+
+    Atlas {
         pages: atlas_pages,
         meta,
-    };
-    Ok(PackOutput { atlas, pages })
+    }
 }
 
-fn pack_auto(prepared: &[Prep], base: PackerConfig) -> Result<PackOutput> {
+fn total_packed_area(pages: &[PackedPage]) -> u64 {
+    pages
+        .iter()
+        .map(|p| (p.width as u64) * (p.height as u64))
+        .sum()
+}
+
+fn pack_auto_pages<T: Sync>(
+    prepared: &[PreparedItem<T>],
+    base: PackerConfig,
+) -> Result<Vec<PackedPage>> {
     let mut candidates: Vec<PackerConfig> = Vec::new();
     let n_inputs = prepared.len();
     let budget_ms = base.time_budget_ms.unwrap_or(0);
@@ -407,18 +493,13 @@ fn pack_auto(prepared: &[Prep], base: PackerConfig) -> Result<PackOutput> {
     #[cfg(feature = "parallel")]
     {
         if base.parallel {
-            let results: Vec<(PackOutput, u64, u32)> = candidates
+            let results: Vec<(Vec<PackedPage>, u64, u32)> = candidates
                 .par_iter()
-                .filter_map(|cand| pack_prepared(prepared, cand).ok())
-                .map(|out| {
-                    let pages = out.atlas.pages.len() as u32;
-                    let total_area: u64 = out
-                        .atlas
-                        .pages
-                        .iter()
-                        .map(|p| (p.width as u64) * (p.height as u64))
-                        .sum();
-                    (out, total_area, pages)
+                .filter_map(|cand| pack_pages_for_family(prepared, cand).ok())
+                .map(|pages| {
+                    let page_count = pages.len() as u32;
+                    let total_area = total_packed_area(&pages);
+                    (pages, total_area, page_count)
                 })
                 .collect();
             let best = results.into_iter().min_by(|a, b| match a.2.cmp(&b.2) {
@@ -434,24 +515,19 @@ fn pack_auto(prepared: &[Prep], base: PackerConfig) -> Result<PackOutput> {
     }
 
     // Sequential path with optional time budget
-    let mut best: Option<(PackOutput, u64, u32)> = None; // (output, total_area, pages)
+    let mut best: Option<(Vec<PackedPage>, u64, u32)> = None; // (pages, total_area, page count)
     for cand in candidates.into_iter() {
         if budget_ms > 0 && start.elapsed().as_millis() as u64 > budget_ms {
             break;
         }
-        if let Ok(out) = pack_prepared(prepared, &cand) {
-            let pages = out.atlas.pages.len() as u32;
-            let total_area: u64 = out
-                .atlas
-                .pages
-                .iter()
-                .map(|p| (p.width as u64) * (p.height as u64))
-                .sum();
+        if let Ok(packed_pages) = pack_pages_for_family(prepared, &cand) {
+            let pages = packed_pages.len() as u32;
+            let total_area = total_packed_area(&packed_pages);
             match &mut best {
-                None => best = Some((out, total_area, pages)),
+                None => best = Some((packed_pages, total_area, pages)),
                 Some((bo, barea, bpages)) => {
                     if pages < *bpages || (pages == *bpages && total_area < *barea) {
-                        *bo = out;
+                        *bo = packed_pages;
                         *barea = total_area;
                         *bpages = pages;
                     }
@@ -479,22 +555,15 @@ pub fn pack_layout<K: Into<String>>(
     if inputs.is_empty() {
         return Err(TexPackerError::Empty);
     }
-    // Build lightweight preps
-    struct PrepL {
-        key: String,
-        rect: Rect,
-        trimmed: bool,
-        source: Rect,
-        orig_size: (u32, u32),
-    }
-    let mut prepared: Vec<PrepL> = inputs
+    let mut prepared: Vec<PreparedItem<()>> = inputs
         .into_iter()
         .map(|(k, w, h)| {
             let key = k.into();
             let rect = Rect::new(0, 0, w, h);
             let source = Rect::new(0, 0, w, h);
-            PrepL {
+            PreparedItem {
                 key,
+                payload: (),
                 rect,
                 trimmed: false,
                 source,
@@ -502,111 +571,10 @@ pub fn pack_layout<K: Into<String>>(
             }
         })
         .collect();
-    // Sort like pack_images
-    match cfg.sort_order {
-        SortOrder::None => {}
-        SortOrder::NameAsc => prepared.sort_by(|a, b| a.key.cmp(&b.key)),
-        SortOrder::AreaDesc => prepared.sort_by(|a, b| {
-            (b.rect.w * b.rect.h)
-                .cmp(&(a.rect.w * a.rect.h))
-                .then_with(|| a.key.cmp(&b.key))
-        }),
-        SortOrder::MaxSideDesc => prepared.sort_by(|a, b| {
-            b.rect
-                .w
-                .max(b.rect.h)
-                .cmp(&a.rect.w.max(a.rect.h))
-                .then_with(|| a.key.cmp(&b.key))
-        }),
-        SortOrder::HeightDesc => {
-            prepared.sort_by(|a, b| b.rect.h.cmp(&a.rect.h).then_with(|| a.key.cmp(&b.key)))
-        }
-        SortOrder::WidthDesc => {
-            prepared.sort_by(|a, b| b.rect.w.cmp(&a.rect.w).then_with(|| a.key.cmp(&b.key)))
-        }
-    }
+    sort_prepared(&mut prepared, &cfg);
 
-    let mut remaining: Vec<usize> = (0..prepared.len()).collect();
-    let mut atlas_pages: Vec<Page> = Vec::new();
-    let mut page_id = 0usize;
-    while !remaining.is_empty() {
-        let mut packer: Box<dyn Packer<String>> = match cfg.family {
-            AlgorithmFamily::Skyline => Box::new(SkylinePacker::new(cfg.clone())),
-            AlgorithmFamily::MaxRects => {
-                Box::new(MaxRectsPacker::new(cfg.clone(), cfg.mr_heuristic.clone()))
-            }
-            AlgorithmFamily::Guillotine => Box::new(GuillotinePacker::new(
-                cfg.clone(),
-                cfg.g_choice.clone(),
-                cfg.g_split.clone(),
-            )),
-            AlgorithmFamily::Auto => unreachable!(),
-        };
-        let mut frames: Vec<Frame> = Vec::new();
-        loop {
-            let mut placed_any = false;
-            let mut remove_set: HashSet<usize> = HashSet::new();
-            for &idx in &remaining {
-                let p = &prepared[idx];
-                if !packer.can_pack(&p.rect) {
-                    continue;
-                }
-                if let Some(mut f) = packer.pack(p.key.clone(), &p.rect) {
-                    f.trimmed = p.trimmed;
-                    f.source = p.source;
-                    f.source_size = p.orig_size;
-                    frames.push(f);
-                    remove_set.insert(idx);
-                    placed_any = true;
-                }
-            }
-            if !placed_any {
-                break;
-            }
-            if !remove_set.is_empty() {
-                remaining.retain(|i| !remove_set.contains(i));
-            }
-        }
-        if frames.is_empty() {
-            let placed = prepared.len() - remaining.len();
-            return Err(TexPackerError::OutOfSpaceGeneric {
-                placed,
-                total: prepared.len(),
-            });
-        }
-
-        // Compute page size same as pack_prepared
-        let (page_w, page_h) = compute_page_size(&frames, &cfg);
-
-        let page = Page {
-            id: page_id,
-            width: page_w,
-            height: page_h,
-            frames: frames.clone(),
-        };
-        atlas_pages.push(page);
-        page_id += 1;
-    }
-
-    let meta = Meta {
-        schema_version: "1".into(),
-        app: "tex-packer".into(),
-        version: env!("CARGO_PKG_VERSION").into(),
-        format: "RGBA8888".into(),
-        scale: 1.0,
-        power_of_two: cfg.power_of_two,
-        square: cfg.square,
-        max_dim: (cfg.max_width, cfg.max_height),
-        padding: (cfg.border_padding, cfg.texture_padding),
-        extrude: cfg.texture_extrusion,
-        allow_rotation: cfg.allow_rotation,
-        trim_mode: if cfg.trim { "trim" } else { "none" }.into(),
-        background_color: None,
-    };
-    Ok(Atlas {
-        pages: atlas_pages,
-        meta,
-    })
+    let packed_pages = pack_prepared_pages(&prepared, &cfg)?;
+    Ok(build_atlas(&packed_pages, &cfg))
 }
 
 /// Layout-only item with optional source/source_size to propagate trimming metadata.
@@ -631,22 +599,16 @@ pub fn pack_layout_items<K: Into<String>>(
     if items.is_empty() {
         return Err(TexPackerError::Empty);
     }
-    struct PrepL {
-        key: String,
-        rect: Rect,
-        trimmed: bool,
-        source: Rect,
-        orig_size: (u32, u32),
-    }
-    let mut prepared: Vec<PrepL> = items
+    let mut prepared: Vec<PreparedItem<()>> = items
         .into_iter()
         .map(|it| {
             let key = it.key.into();
             let rect = Rect::new(0, 0, it.w, it.h);
             let source = it.source.unwrap_or(Rect::new(0, 0, it.w, it.h));
             let orig = it.source_size.unwrap_or((it.w, it.h));
-            PrepL {
+            PreparedItem {
                 key,
+                payload: (),
                 rect,
                 trimmed: it.trimmed,
                 source,
@@ -654,109 +616,10 @@ pub fn pack_layout_items<K: Into<String>>(
             }
         })
         .collect();
-    match cfg.sort_order {
-        SortOrder::None => {}
-        SortOrder::NameAsc => prepared.sort_by(|a, b| a.key.cmp(&b.key)),
-        SortOrder::AreaDesc => prepared.sort_by(|a, b| {
-            (b.rect.w * b.rect.h)
-                .cmp(&(a.rect.w * a.rect.h))
-                .then_with(|| a.key.cmp(&b.key))
-        }),
-        SortOrder::MaxSideDesc => prepared.sort_by(|a, b| {
-            b.rect
-                .w
-                .max(b.rect.h)
-                .cmp(&a.rect.w.max(a.rect.h))
-                .then_with(|| a.key.cmp(&b.key))
-        }),
-        SortOrder::HeightDesc => {
-            prepared.sort_by(|a, b| b.rect.h.cmp(&a.rect.h).then_with(|| a.key.cmp(&b.key)))
-        }
-        SortOrder::WidthDesc => {
-            prepared.sort_by(|a, b| b.rect.w.cmp(&a.rect.w).then_with(|| a.key.cmp(&b.key)))
-        }
-    }
+    sort_prepared(&mut prepared, &cfg);
 
-    let mut remaining: Vec<usize> = (0..prepared.len()).collect();
-    let mut atlas_pages: Vec<Page> = Vec::new();
-    let mut page_id = 0usize;
-    while !remaining.is_empty() {
-        let mut packer: Box<dyn Packer<String>> = match cfg.family {
-            AlgorithmFamily::Skyline => Box::new(SkylinePacker::new(cfg.clone())),
-            AlgorithmFamily::MaxRects => {
-                Box::new(MaxRectsPacker::new(cfg.clone(), cfg.mr_heuristic.clone()))
-            }
-            AlgorithmFamily::Guillotine => Box::new(GuillotinePacker::new(
-                cfg.clone(),
-                cfg.g_choice.clone(),
-                cfg.g_split.clone(),
-            )),
-            AlgorithmFamily::Auto => unreachable!(),
-        };
-        let mut frames: Vec<Frame> = Vec::new();
-        loop {
-            let mut placed_any = false;
-            let mut remove_set: HashSet<usize> = HashSet::new();
-            for &idx in &remaining {
-                let p = &prepared[idx];
-                if !packer.can_pack(&p.rect) {
-                    continue;
-                }
-                if let Some(mut f) = packer.pack(p.key.clone(), &p.rect) {
-                    f.trimmed = p.trimmed;
-                    f.source = p.source;
-                    f.source_size = p.orig_size;
-                    frames.push(f);
-                    remove_set.insert(idx);
-                    placed_any = true;
-                }
-            }
-            if !placed_any {
-                break;
-            }
-            if !remove_set.is_empty() {
-                remaining.retain(|i| !remove_set.contains(i));
-            }
-        }
-        if frames.is_empty() {
-            let placed = prepared.len() - remaining.len();
-            return Err(TexPackerError::OutOfSpaceGeneric {
-                placed,
-                total: prepared.len(),
-            });
-        }
-
-        let (page_w, page_h) = compute_page_size(&frames, &cfg);
-
-        let page = Page {
-            id: page_id,
-            width: page_w,
-            height: page_h,
-            frames: frames.clone(),
-        };
-        atlas_pages.push(page);
-        page_id += 1;
-    }
-
-    let meta = Meta {
-        schema_version: "1".into(),
-        app: "tex-packer".into(),
-        version: env!("CARGO_PKG_VERSION").into(),
-        format: "RGBA8888".into(),
-        scale: 1.0,
-        power_of_two: cfg.power_of_two,
-        square: cfg.square,
-        max_dim: (cfg.max_width, cfg.max_height),
-        padding: (cfg.border_padding, cfg.texture_padding),
-        extrude: cfg.texture_extrusion,
-        allow_rotation: cfg.allow_rotation,
-        trim_mode: if cfg.trim { "trim" } else { "none" }.into(),
-        background_color: None,
-    };
-    Ok(Atlas {
-        pages: atlas_pages,
-        meta,
-    })
+    let packed_pages = pack_prepared_pages(&prepared, &cfg)?;
+    Ok(build_atlas(&packed_pages, &cfg))
 }
 
 /// Compute final page dimensions given placed frames and config.

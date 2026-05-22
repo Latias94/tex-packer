@@ -8,15 +8,21 @@ Core library for packing many textures into atlas pages. Provides algorithms, da
 
 ## Install
 
-- Cargo.toml
+Cargo.toml:
 
 ```toml
 [dependencies]
-tex-packer-core = { git = "https://example.com/your/repo", package = "tex-packer-core" }
+tex-packer-core = "0.2"
 image = "0.25"
 ```
 
-Note: If using crates.io, set the version accordingly after publish.
+Before crates.io publication, depend on the repository directly:
+
+```toml
+[dependencies]
+tex-packer-core = { git = "https://github.com/Latias94/tex-packer", package = "tex-packer-core" }
+image = "0.25"
+```
 
 ## Quick Example
 

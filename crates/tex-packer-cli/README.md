@@ -8,20 +8,43 @@ Command-line tool for tex-packer. Packs images from disk into atlas pages, write
 ## Install
 
 - From repo: `cargo install --path crates/tex-packer-cli`
-- From crates.io: use `cargo install tex-packer-cli` after publish.
+- From crates.io: `cargo install tex-packer-cli`
 - Parallel portfolio (optional): build the CLI with the `parallel` feature so `--parallel` takes effect.
   - Example: `cargo run -p tex-packer-cli --features parallel -- <args>`
 
-## Usage
+## First pack
 
-Subcommands:
+```bash
+tex-packer pack ./assets --out ./out --name atlas
+```
+
+Outputs:
+
+- Single page: `out/atlas.png` and `out/atlas.json`
+- Multiple pages: `out/atlas_0.png`, `out/atlas_1.png`, ... and `out/atlas.json`
+
+For a higher-quality offline pack:
+
+```bash
+tex-packer pack ./assets \
+  --out ./out \
+  --name atlas \
+  --algorithm auto \
+  --auto-mode quality \
+  --time-budget 500 \
+  --allow-rotation \
+  --texture-padding 2 \
+  --texture-extrusion 2
+```
+
+## Commands
 
 - Pack: `tex-packer pack <input> [options]` (writes PNGs + metadata)
 - Template: `tex-packer template <input> [options]` (forces `--metadata template`)
 - Layout: `tex-packer layout <input> [options]` (layout-only: no PNGs; exports JSON/Plist)
 - Bench: `tex-packer bench <input> [--algorithm auto] [--auto-mode quality] [--time-budget MS]`
 
-Global flags: `[-q|--quiet] [-v|--verbose] [--progress|--no-progress]`
+Global flags: `[-q|--quiet] [-v|--verbose] [--progress true|false]`
 
 Metadata formats:
 
@@ -43,8 +66,10 @@ Examples:
 - Print merged config and exit: `--print-config` (useful to inspect YAML+CLI result)
 - Include/Exclude: `--include "**/*.png" --exclude "**/ui/**"` (multiple allowed)
 - Verbosity: `-q/--quiet` suppresses logs; `-v`/`-vv` increases verbosity
-- Progress: `--progress/--no-progress` toggles progress bars (default on; disabled by quiet)
+- Progress: `--progress true|false` toggles progress bars (default on; disabled by quiet)
 - Auto thresholds: override quality mode thresholds via `--auto-mr-ref-time-threshold 500` or `--auto-mr-ref-input-threshold 1000`
+
+Run `tex-packer --help` or `tex-packer pack --help` for the full option list.
 
 ## YAML Configuration
 

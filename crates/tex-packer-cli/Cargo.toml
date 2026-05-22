@@ -41,3 +41,7 @@ rand = "0.8"
 default = []
 # Enable: cargo run -p tex-packer-cli --features parallel -- ...
 parallel = ["tex-packer-core/parallel"]
+
+[[bin]]
+name = "tex-packer"
+path = "src/main.rs"

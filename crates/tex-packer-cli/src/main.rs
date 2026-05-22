@@ -55,7 +55,13 @@ pub(crate) struct PackArgs {
     #[arg(help_heading = "Input/Output")]
     pub(crate) input: PathBuf,
     /// Output directory
-    #[arg(short, long, default_value = "out", help_heading = "Input/Output")]
+    #[arg(
+        short,
+        long = "out-dir",
+        alias = "out",
+        default_value = "out",
+        help_heading = "Input/Output"
+    )]
     pub(crate) out_dir: PathBuf,
     /// Atlas base name (files will be name.png/.json)
     #[arg(short, long, default_value = "atlas", help_heading = "Input/Output")]

@@ -1,15 +1,18 @@
 use crate::config::PackerConfig;
-use crate::config::{AlgorithmFamily, AutoMode, SortOrder};
+use crate::config::{AlgorithmFamily, AutoMode};
 use crate::error::{Result, TexPackerError};
 use crate::geometry::PackingContext;
 use crate::model::{Atlas, Frame, Meta, Page, Rect};
 use crate::packer::{
     Packer, guillotine::GuillotinePacker, maxrects::MaxRectsPacker, skyline::SkylinePacker,
 };
+use crate::preparation::{PreparedItem, prepare_images, prepare_layout, prepare_layout_items};
 use image::{DynamicImage, RgbaImage};
 use std::collections::HashSet;
 use std::time::Instant;
 use tracing::instrument;
+
+pub use crate::preparation::compute_trim_rect;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -55,93 +58,9 @@ pub fn pack_images(inputs: Vec<InputImage>, cfg: PackerConfig) -> Result<PackOut
         return Err(TexPackerError::Empty);
     }
 
-    // Preprocess once
-    let prepared = prepare_inputs(&inputs, &cfg);
+    let prepared = prepare_images(&inputs, &cfg);
 
     pack_prepared(&prepared, &cfg)
-}
-
-pub fn compute_trim_rect(rgba: &RgbaImage, threshold: u8) -> (Option<Rect>, Rect) {
-    let (w, h) = rgba.dimensions();
-    let mut x1 = 0;
-    let mut y1 = 0;
-    let mut x2 = w.saturating_sub(1);
-    let mut y2 = h.saturating_sub(1);
-    // left
-    while x1 < w {
-        let mut all_transparent = true;
-        for y in 0..h {
-            if rgba.get_pixel(x1, y)[3] > threshold {
-                all_transparent = false;
-                break;
-            }
-        }
-        if all_transparent {
-            x1 += 1;
-        } else {
-            break;
-        }
-    }
-    if x1 >= w {
-        return (None, Rect::new(0, 0, w, h));
-    }
-    // right
-    while x2 > x1 {
-        let mut all_transparent = true;
-        for y in 0..h {
-            if rgba.get_pixel(x2, y)[3] > threshold {
-                all_transparent = false;
-                break;
-            }
-        }
-        if all_transparent {
-            x2 -= 1;
-        } else {
-            break;
-        }
-    }
-    // top
-    while y1 < h {
-        let mut all_transparent = true;
-        for x in x1..=x2 {
-            if rgba.get_pixel(x, y1)[3] > threshold {
-                all_transparent = false;
-                break;
-            }
-        }
-        if all_transparent {
-            y1 += 1;
-        } else {
-            break;
-        }
-    }
-    // bottom
-    while y2 > y1 {
-        let mut all_transparent = true;
-        for x in x1..=x2 {
-            if rgba.get_pixel(x, y2)[3] > threshold {
-                all_transparent = false;
-                break;
-            }
-        }
-        if all_transparent {
-            y2 -= 1;
-        } else {
-            break;
-        }
-    }
-    let tw = x2 - x1 + 1;
-    let th = y2 - y1 + 1;
-    (Some(Rect::new(0, 0, tw, th)), Rect::new(x1, y1, tw, th))
-}
-
-struct PreparedItem<T> {
-    key: String,
-    payload: T,
-    rect: Rect,
-    trimmed: bool,
-    source: Rect,
-    orig_size: (u32, u32),
 }
 
 #[derive(Clone)]
@@ -220,80 +139,6 @@ impl<'a> OfflinePipeline<'a> {
 
     fn build_atlas(&self, packed_pages: &[PackedPage]) -> Atlas {
         build_atlas(packed_pages, self.cfg)
-    }
-}
-
-fn prepare_inputs(inputs: &[InputImage], cfg: &PackerConfig) -> Vec<PreparedItem<RgbaImage>> {
-    let mut out = Vec::with_capacity(inputs.len());
-    for inp in inputs.iter() {
-        let rgba = inp.image.to_rgba8();
-        let (iw, ih) = rgba.dimensions();
-        let mut push_entry = true;
-        let (rect, trimmed, source) = if cfg.trim {
-            let (trim_rect_opt, src_rect) = compute_trim_rect(&rgba, cfg.trim_threshold);
-            match trim_rect_opt {
-                Some(r) => (Rect::new(0, 0, r.w, r.h), true, src_rect),
-                None => match cfg.transparent_policy {
-                    crate::config::TransparentPolicy::Keep => {
-                        (Rect::new(0, 0, iw, ih), false, Rect::new(0, 0, iw, ih))
-                    }
-                    crate::config::TransparentPolicy::OneByOne => {
-                        (Rect::new(0, 0, 1, 1), true, Rect::new(0, 0, 1, 1))
-                    }
-                    crate::config::TransparentPolicy::Skip => {
-                        push_entry = false;
-                        (Rect::new(0, 0, 0, 0), false, Rect::new(0, 0, 0, 0))
-                    }
-                },
-            }
-        } else {
-            (Rect::new(0, 0, iw, ih), false, Rect::new(0, 0, iw, ih))
-        };
-        if !push_entry {
-            continue;
-        }
-        out.push(PreparedItem {
-            key: inp.key.clone(),
-            payload: rgba,
-            rect,
-            trimmed,
-            source,
-            orig_size: (iw, ih),
-        });
-    }
-
-    sort_prepared(&mut out, cfg);
-    out
-}
-
-fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], cfg: &PackerConfig) {
-    match cfg.sort_order {
-        SortOrder::None => {}
-        SortOrder::NameAsc => {
-            prepared.sort_by(|a, b| a.key.cmp(&b.key));
-        }
-        SortOrder::AreaDesc => {
-            prepared.sort_by(|a, b| {
-                (b.rect.w * b.rect.h)
-                    .cmp(&(a.rect.w * a.rect.h))
-                    .then_with(|| a.key.cmp(&b.key))
-            });
-        }
-        SortOrder::MaxSideDesc => {
-            prepared.sort_by(|a, b| {
-                b.rect
-                    .w
-                    .max(b.rect.h)
-                    .cmp(&a.rect.w.max(a.rect.h))
-                    .then_with(|| a.key.cmp(&b.key))
-            });
-        }
-        SortOrder::HeightDesc => {
-            prepared.sort_by(|a, b| b.rect.h.cmp(&a.rect.h).then_with(|| a.key.cmp(&b.key)));
-        }
-        SortOrder::WidthDesc => {
-            prepared.sort_by(|a, b| b.rect.w.cmp(&a.rect.w).then_with(|| a.key.cmp(&b.key)));
-        }
     }
 }
 
@@ -562,23 +407,7 @@ pub fn pack_layout<K: Into<String>>(
     if inputs.is_empty() {
         return Err(TexPackerError::Empty);
     }
-    let mut prepared: Vec<PreparedItem<()>> = inputs
-        .into_iter()
-        .map(|(k, w, h)| {
-            let key = k.into();
-            let rect = Rect::new(0, 0, w, h);
-            let source = Rect::new(0, 0, w, h);
-            PreparedItem {
-                key,
-                payload: (),
-                rect,
-                trimmed: false,
-                source,
-                orig_size: (w, h),
-            }
-        })
-        .collect();
-    sort_prepared(&mut prepared, &cfg);
+    let prepared = prepare_layout(inputs, &cfg);
 
     OfflinePipeline::new(&cfg).pack_layout(&prepared)
 }
@@ -605,24 +434,7 @@ pub fn pack_layout_items<K: Into<String>>(
     if items.is_empty() {
         return Err(TexPackerError::Empty);
     }
-    let mut prepared: Vec<PreparedItem<()>> = items
-        .into_iter()
-        .map(|it| {
-            let key = it.key.into();
-            let rect = Rect::new(0, 0, it.w, it.h);
-            let source = it.source.unwrap_or(Rect::new(0, 0, it.w, it.h));
-            let orig = it.source_size.unwrap_or((it.w, it.h));
-            PreparedItem {
-                key,
-                payload: (),
-                rect,
-                trimmed: it.trimmed,
-                source,
-                orig_size: orig,
-            }
-        })
-        .collect();
-    sort_prepared(&mut prepared, &cfg);
+    let prepared = prepare_layout_items(items, &cfg);
 
     OfflinePipeline::new(&cfg).pack_layout(&prepared)
 }

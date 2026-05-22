@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "slug": "remaining-architecture-deepening-v1",
+  "title": "Remaining Architecture Deepening",
+  "status": "complete",
+  "updated": "2026-05-22",
+  "scope_kind": "execution",
+  "problem": "Export projection, runtime strategy locality, image preparation, and CLI pack orchestration remain shallower than ideal after the first architecture-deepening lane.",
+  "target_state": "Export manifest projection, runtime strategy Adapters, image preparation, and CLI pack command pipeline are deepened with fresh tests and workstream evidence.",
+  "authoritative_docs": [
+    {
+      "role": "design",
+      "path": "docs/workstreams/remaining-architecture-deepening-v1/DESIGN.md"
+    },
+    {
+      "role": "execution",
+      "path": "docs/workstreams/remaining-architecture-deepening-v1/TODO.md"
+    },
+    {
+      "role": "milestones",
+      "path": "docs/workstreams/remaining-architecture-deepening-v1/MILESTONES.md"
+    },
+    {
+      "role": "gates",
+      "path": "docs/workstreams/remaining-architecture-deepening-v1/EVIDENCE_AND_GATES.md"
+    },
+    {
+      "role": "handoff",
+      "path": "docs/workstreams/remaining-architecture-deepening-v1/HANDOFF.md"
+    }
+  ],
+  "gates": [
+    "cargo fmt --check",
+    "cargo check -p tex-packer-core -p tex-packer-cli -p tex-packer-gui",
+    "cargo nextest run -p tex-packer-core",
+    "cargo nextest run --workspace"
+  ],
+  "evidence": [
+    "RAD-010 workstream opened on 2026-05-22.",
+    "RAD-020 targeted gates passed: cargo nextest run -p tex-packer-core --test export_smoke (1/1), cargo check -p tex-packer-cli, and cargo nextest run -p tex-packer-core --test layout_vs_images --test export_smoke (6/6).",
+    "RAD-030 targeted gates passed: cargo nextest run -p tex-packer-core --test runtime_session --test runtime_shelf --test runtime_skyline --test runtime_api_improvements --test algorithm_invariants (35/35), cargo nextest run -p tex-packer-core --test export_smoke --test layout_vs_images (6/6), and cargo check -p tex-packer-cli.",
+    "RAD-040 targeted gates passed: cargo fmt --check, cargo nextest run -p tex-packer-core --test transparent_policy --test layout_vs_images --test padding_extrude_offsets --test algorithm_invariants (13/13), and cargo check -p tex-packer-core.",
+    "RAD-050 targeted gates passed: cargo fmt --check, cargo check -p tex-packer-cli, cargo nextest run --workspace (103/103), targeted core regression suite (42/42), plus CLI normal JSON smoke and dry-run template smoke.",
+    "RAD-060 closeout gates passed: cargo fmt --check, cargo check -p tex-packer-core -p tex-packer-cli -p tex-packer-gui, cargo nextest run -p tex-packer-core (103/103), and cargo nextest run --workspace (103/103)."
+  ],
+  "adr_refs": [],
+  "current_task": null,
+  "continue_policy": {
+    "default_action": "closed",
+    "notes": "Workstream complete. Open a new workstream for any future public export schema change, GUI config editor simplification, or new architectural scope."
+  }
+}

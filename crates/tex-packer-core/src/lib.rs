@@ -25,12 +25,14 @@ pub mod compositing;
 pub mod config;
 pub mod error;
 pub mod export;
+mod export_manifest;
 pub mod export_plist;
 mod free_space;
 mod geometry;
 pub mod model;
 pub mod packer;
 pub mod pipeline;
+mod preparation;
 pub mod runtime;
 pub mod runtime_atlas;
 mod runtime_placement;
@@ -38,10 +40,12 @@ mod runtime_placement;
 pub use config::*;
 pub use error::*;
 pub use export::*;
+pub use export_manifest::{TemplateContext, TemplatePage, TemplateSprite, to_template_context};
 pub use export_plist::*;
 pub use model::*;
 pub use packer::*;
 pub use pipeline::*;
+pub use preparation::compute_trim_rect;
 
 /// Convenience prelude for common types and functions.
 /// Importing `tex_packer_core::prelude::*` brings the primary APIs into scope.

@@ -1,5 +1,26 @@
 use image::{Rgba, RgbaImage};
 
+#[derive(Clone, Copy, Debug)]
+pub struct BlitRect {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
+impl BlitRect {
+    pub fn new(x: u32, y: u32, w: u32, h: u32) -> Self {
+        Self { x, y, w, h }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BlitOptions {
+    pub rotated: bool,
+    pub extrude: u32,
+    pub outlines: bool,
+}
+
 /// Blit a sub-rectangle from `src` into `canvas` at destination (dx, dy),
 /// optionally rotated 90° clockwise, then apply pixel extrusion around the
 /// blitted content area and optional red outlines for debugging.
@@ -12,17 +33,29 @@ use image::{Rgba, RgbaImage};
 pub fn blit_rgba(
     src: &RgbaImage,
     canvas: &mut RgbaImage,
-    dx: u32,
-    dy: u32,
-    sx: u32,
-    sy: u32,
-    sw: u32,
-    sh: u32,
-    rotated: bool,
-    extrude: u32,
-    outlines: bool,
+    dst: BlitRect,
+    src_rect: BlitRect,
+    options: BlitOptions,
 ) {
     let (cw, ch) = canvas.dimensions();
+    let BlitRect {
+        x: dx,
+        y: dy,
+        w: _,
+        h: _,
+    } = dst;
+    let BlitRect {
+        x: sx,
+        y: sy,
+        w: sw,
+        h: sh,
+    } = src_rect;
+    let BlitOptions {
+        rotated,
+        extrude,
+        outlines,
+    } = options;
+
     // destination (rendered) size may differ when rotated
     let (rw, rh) = if rotated { (sh, sw) } else { (sw, sh) };
 

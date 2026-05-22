@@ -95,29 +95,26 @@ impl RuntimeSkyline {
         let mut best_rot = false;
 
         for idx in 0..self.skylines.len() {
-            if let Some(rect) = self.can_put(idx, w, h) {
-                if rect.bottom() < best_bottom
-                    || (rect.bottom() == best_bottom && self.skylines[idx].w < best_width)
-                {
-                    best_bottom = rect.bottom();
-                    best_width = self.skylines[idx].w;
-                    best_index = Some(idx);
-                    best_rect = rect;
-                    best_rot = false;
-                }
+            if let Some(rect) = self.can_put(idx, w, h)
+                && (rect.bottom() < best_bottom
+                    || (rect.bottom() == best_bottom && self.skylines[idx].w < best_width))
+            {
+                best_bottom = rect.bottom();
+                best_width = self.skylines[idx].w;
+                best_index = Some(idx);
+                best_rect = rect;
+                best_rot = false;
             }
-            if allow_rotation {
-                if let Some(rect) = self.can_put(idx, h, w) {
-                    if rect.bottom() < best_bottom
-                        || (rect.bottom() == best_bottom && self.skylines[idx].w < best_width)
-                    {
-                        best_bottom = rect.bottom();
-                        best_width = self.skylines[idx].w;
-                        best_index = Some(idx);
-                        best_rect = rect;
-                        best_rot = true;
-                    }
-                }
+            if allow_rotation
+                && let Some(rect) = self.can_put(idx, h, w)
+                && (rect.bottom() < best_bottom
+                    || (rect.bottom() == best_bottom && self.skylines[idx].w < best_width))
+            {
+                best_bottom = rect.bottom();
+                best_width = self.skylines[idx].w;
+                best_index = Some(idx);
+                best_rect = rect;
+                best_rot = true;
             }
         }
 
@@ -142,16 +139,14 @@ impl RuntimeSkyline {
                     best_rot = false;
                 }
             }
-            if allow_rotation {
-                if let Some(rect) = self.can_put(idx, h, w) {
-                    let waste = self.compute_waste(idx, &rect);
-                    if waste < best_waste || (waste == best_waste && rect.bottom() < best_bottom) {
-                        best_waste = waste;
-                        best_bottom = rect.bottom();
-                        best_index = Some(idx);
-                        best_rect = rect;
-                        best_rot = true;
-                    }
+            if allow_rotation && let Some(rect) = self.can_put(idx, h, w) {
+                let waste = self.compute_waste(idx, &rect);
+                if waste < best_waste || (waste == best_waste && rect.bottom() < best_bottom) {
+                    best_waste = waste;
+                    best_bottom = rect.bottom();
+                    best_index = Some(idx);
+                    best_rect = rect;
+                    best_rot = true;
                 }
             }
         }

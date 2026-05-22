@@ -138,11 +138,11 @@ impl AtlasSession {
     }
 
     pub fn evict(&mut self, page_id: usize, key: &str) -> bool {
-        if let Some(p) = self.pages.iter_mut().find(|p| p.id == page_id) {
-            if let Some((slot, _rot, _frame)) = p.used.remove(key) {
-                p.add_free(slot);
-                return true;
-            }
+        if let Some(p) = self.pages.iter_mut().find(|p| p.id == page_id)
+            && let Some((slot, _rot, _frame)) = p.used.remove(key)
+        {
+            p.add_free(slot);
+            return true;
         }
         false
     }

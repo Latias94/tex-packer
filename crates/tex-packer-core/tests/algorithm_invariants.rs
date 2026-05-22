@@ -318,7 +318,9 @@ fn assert_page_frames_disjoint(label: &str, page: &Page<String>) {
     }
 }
 
-fn canonical_frames(atlas: &Atlas<String>) -> Vec<(usize, String, Rect, bool, Rect, (u32, u32))> {
+type CanonicalFrame = (usize, String, Rect, bool, Rect, (u32, u32));
+
+fn canonical_frames(atlas: &Atlas<String>) -> Vec<CanonicalFrame> {
     let mut out = atlas
         .pages
         .iter()

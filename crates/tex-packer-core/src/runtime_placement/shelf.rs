@@ -42,18 +42,14 @@ impl RuntimeShelfPlacement {
         if let Some(rect) = self.try_existing_shelf(w, h) {
             return Some((rect, false));
         }
-        if allow_rotation {
-            if let Some(rect) = self.try_existing_shelf(h, w) {
-                return Some((rect, true));
-            }
+        if allow_rotation && let Some(rect) = self.try_existing_shelf(h, w) {
+            return Some((rect, true));
         }
         if let Some(rect) = self.try_new_shelf(w, h) {
             return Some((rect, false));
         }
-        if allow_rotation {
-            if let Some(rect) = self.try_new_shelf(h, w) {
-                return Some((rect, true));
-            }
+        if allow_rotation && let Some(rect) = self.try_new_shelf(h, w) {
+            return Some((rect, true));
         }
         None
     }
@@ -101,12 +97,12 @@ impl RuntimeShelfPlacement {
         };
 
         for shelf in shelves {
-            if h <= shelf.h {
-                if let Some((x, _width)) = shelf.segs.iter().find(|(x, width)| {
+            if h <= shelf.h
+                && let Some((x, _width)) = shelf.segs.iter().find(|(x, width)| {
                     *width >= w && span_end_ex(*x, w) <= right_ex_u32(&self.border)
-                }) {
-                    return Some(Rect::new(*x, shelf.y, w, h));
-                }
+                })
+            {
+                return Some(Rect::new(*x, shelf.y, w, h));
             }
         }
         None
@@ -151,11 +147,11 @@ fn merge_shelf_segments(shelf: &mut RuntimeShelf) {
     shelf.segs.sort_by_key(|(x, _)| *x);
     let mut out: Vec<(u32, u32)> = Vec::new();
     for (x, w) in shelf.segs.drain(..) {
-        if let Some((last_x, last_w)) = out.last_mut() {
-            if span_end_ex(*last_x, *last_w) == x {
-                *last_w += w;
-                continue;
-            }
+        if let Some((last_x, last_w)) = out.last_mut()
+            && span_end_ex(*last_x, *last_w) == x
+        {
+            *last_w += w;
+            continue;
         }
         out.push((x, w));
     }

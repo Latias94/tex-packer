@@ -195,10 +195,10 @@ impl AppState {
     }
 
     pub fn pick_files(&mut self) {
-        if let Some(files) = rfd::FileDialog::new().set_directory(".").pick_files() {
-            if let Err(e) = self.load_inputs_from_paths(&files) {
-                self.set_error(e.to_string());
-            }
+        if let Some(files) = rfd::FileDialog::new().set_directory(".").pick_files()
+            && let Err(e) = self.load_inputs_from_paths(&files)
+        {
+            self.set_error(e.to_string());
         }
     }
 

@@ -119,11 +119,9 @@ impl RuntimeAtlas {
         // Evict from session
         if self.session.evict(page_id, key) {
             // Clear pixels if requested
-            if clear {
-                if let Some(region) = slot_region {
-                    self.clear_region(region);
-                    return Some(region);
-                }
+            if clear && let Some(region) = slot_region {
+                self.clear_region(region);
+                return Some(region);
             }
             Some(UpdateRegion::empty())
         } else {
@@ -149,11 +147,9 @@ impl RuntimeAtlas {
         };
 
         if self.session.evict_by_key(key) {
-            if clear {
-                if let Some(region) = slot_region {
-                    self.clear_region(region);
-                    return Some(region);
-                }
+            if clear && let Some(region) = slot_region {
+                self.clear_region(region);
+                return Some(region);
             }
             Some(UpdateRegion::empty())
         } else {
@@ -232,19 +228,14 @@ impl RuntimeAtlas {
         // Reuse core compositing (with extrusion and optional outlines)
         let extrude = self.session.cfg.texture_extrusion;
         let outlines = self.session.cfg.texture_outlines;
-        crate::compositing::blit_rgba(
-            image,
-            page,
-            dst_x,
-            dst_y,
-            0,
-            0,
-            src_w,
-            src_h,
-            frame.rotated,
+        let dst = crate::compositing::BlitRect::new(dst_x, dst_y, frame.frame.w, frame.frame.h);
+        let src = crate::compositing::BlitRect::new(0, 0, src_w, src_h);
+        let options = crate::compositing::BlitOptions {
+            rotated: frame.rotated,
             extrude,
             outlines,
-        );
+        };
+        crate::compositing::blit_rgba(image, page, dst, src, options);
 
         // Return the minimal update region including extrusion
         let start_x = dst_x.saturating_sub(extrude);

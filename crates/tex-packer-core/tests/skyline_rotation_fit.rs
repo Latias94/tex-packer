@@ -7,12 +7,14 @@ use tex_packer_core::packer::skyline::SkylinePacker;
 fn skyline_rotates_when_only_rotated_fits() {
     // Page inner area: 16x9 (no border), allow rotation.
     // Rect is 8x14; unrotated (8x14) doesn't fit (14>9), rotated (14x8) fits (14<=16, 8<=9).
-    let mut cfg = PackerConfig::default();
-    cfg.max_width = 16;
-    cfg.max_height = 12;
-    cfg.allow_rotation = true;
-    cfg.skyline_heuristic = SkylineHeuristic::BottomLeft;
-    cfg.texture_padding = 0;
+    let cfg = PackerConfig {
+        max_width: 16,
+        max_height: 12,
+        allow_rotation: true,
+        skyline_heuristic: SkylineHeuristic::BottomLeft,
+        texture_padding: 0,
+        ..Default::default()
+    };
 
     let mut p = SkylinePacker::new(cfg);
     let r = Rect::new(0, 0, 8, 14);

@@ -145,7 +145,7 @@ pub fn render(
         // Checkerboard background
         if state.bg_checkerboard {
             draw_checker(
-                &ui.painter(),
+                ui.painter(),
                 desired,
                 state.bg_checker_size,
                 ui.visuals().dark_mode,
@@ -189,30 +189,30 @@ pub fn render(
                 }
             }
             // Hover highlight
-            if let Some(mouse) = ui.ctx().pointer_hover_pos() {
-                if response.rect.contains(mouse) {
-                    let local = mouse - desired.min;
-                    let atlas = egui::vec2(local.x / scale, local.y / scale);
-                    for fr in &page.frames {
-                        if atlas.x >= fr.frame.x as f32
-                            && atlas.y >= fr.frame.y as f32
-                            && atlas.x < (fr.frame.x + fr.frame.w) as f32
-                            && atlas.y < (fr.frame.y + fr.frame.h) as f32
-                        {
-                            hovered = Some((fr.key.clone(), (atlas.x as u32, atlas.y as u32)));
-                            let min = desired.min
-                                + egui::vec2(fr.frame.x as f32 * scale, fr.frame.y as f32 * scale);
-                            let max = min
-                                + egui::vec2(fr.frame.w as f32 * scale, fr.frame.h as f32 * scale);
-                            let rect = egui::Rect::from_min_max(min, max);
-                            ui.painter().rect_stroke(
-                                rect,
-                                CornerRadius::ZERO,
-                                egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 120, 0)),
-                                StrokeKind::Outside,
-                            );
-                            break;
-                        }
+            if let Some(mouse) = ui.ctx().pointer_hover_pos()
+                && response.rect.contains(mouse)
+            {
+                let local = mouse - desired.min;
+                let atlas = egui::vec2(local.x / scale, local.y / scale);
+                for fr in &page.frames {
+                    if atlas.x >= fr.frame.x as f32
+                        && atlas.y >= fr.frame.y as f32
+                        && atlas.x < (fr.frame.x + fr.frame.w) as f32
+                        && atlas.y < (fr.frame.y + fr.frame.h) as f32
+                    {
+                        hovered = Some((fr.key.clone(), (atlas.x as u32, atlas.y as u32)));
+                        let min = desired.min
+                            + egui::vec2(fr.frame.x as f32 * scale, fr.frame.y as f32 * scale);
+                        let max =
+                            min + egui::vec2(fr.frame.w as f32 * scale, fr.frame.h as f32 * scale);
+                        let rect = egui::Rect::from_min_max(min, max);
+                        ui.painter().rect_stroke(
+                            rect,
+                            CornerRadius::ZERO,
+                            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 120, 0)),
+                            StrokeKind::Outside,
+                        );
+                        break;
                     }
                 }
             }
@@ -245,45 +245,44 @@ pub fn render(
         }
 
         // Click to select & draw selected highlight
-        if response.clicked() {
-            if let Some(mouse) = ui.ctx().pointer_hover_pos() {
-                if response.rect.contains(mouse) {
-                    let local = mouse - desired.min;
-                    let atlas = egui::vec2(local.x / scale, local.y / scale);
-                    for fr in &page.frames {
-                        if atlas.x >= fr.frame.x as f32
-                            && atlas.y >= fr.frame.y as f32
-                            && atlas.x < (fr.frame.x + fr.frame.w) as f32
-                            && atlas.y < (fr.frame.y + fr.frame.h) as f32
-                        {
-                            state.selected = Some(crate::state::SelectedSprite {
-                                key: fr.key.clone(),
-                                page_index: state.selected_page,
-                            });
-                            break;
-                        }
-                    }
+        if response.clicked()
+            && let Some(mouse) = ui.ctx().pointer_hover_pos()
+            && response.rect.contains(mouse)
+        {
+            let local = mouse - desired.min;
+            let atlas = egui::vec2(local.x / scale, local.y / scale);
+            for fr in &page.frames {
+                if atlas.x >= fr.frame.x as f32
+                    && atlas.y >= fr.frame.y as f32
+                    && atlas.x < (fr.frame.x + fr.frame.w) as f32
+                    && atlas.y < (fr.frame.y + fr.frame.h) as f32
+                {
+                    state.selected = Some(crate::state::SelectedSprite {
+                        key: fr.key.clone(),
+                        page_index: state.selected_page,
+                    });
+                    break;
                 }
             }
         }
 
-        if let Some(sel) = &state.selected {
-            if sel.page_index == state.selected_page {
-                for fr in &page.frames {
-                    if fr.key == sel.key {
-                        let min = desired.min
-                            + egui::vec2(fr.frame.x as f32 * scale, fr.frame.y as f32 * scale);
-                        let max =
-                            min + egui::vec2(fr.frame.w as f32 * scale, fr.frame.h as f32 * scale);
-                        let rect = egui::Rect::from_min_max(min, max);
-                        ui.painter().rect_stroke(
-                            rect,
-                            CornerRadius::ZERO,
-                            egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 255, 100)),
-                            StrokeKind::Outside,
-                        );
-                        break;
-                    }
+        if let Some(sel) = &state.selected
+            && sel.page_index == state.selected_page
+        {
+            for fr in &page.frames {
+                if fr.key == sel.key {
+                    let min = desired.min
+                        + egui::vec2(fr.frame.x as f32 * scale, fr.frame.y as f32 * scale);
+                    let max =
+                        min + egui::vec2(fr.frame.w as f32 * scale, fr.frame.h as f32 * scale);
+                    let rect = egui::Rect::from_min_max(min, max);
+                    ui.painter().rect_stroke(
+                        rect,
+                        CornerRadius::ZERO,
+                        egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 255, 100)),
+                        StrokeKind::Outside,
+                    );
+                    break;
                 }
             }
         }

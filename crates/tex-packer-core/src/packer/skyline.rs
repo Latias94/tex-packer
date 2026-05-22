@@ -97,29 +97,26 @@ impl SkylinePacker {
         let mut best_rot = false;
 
         for i in 0..self.skylines.len() {
-            if let Some(r) = self.can_put(i, w, h) {
-                if r.bottom() < best_bottom
-                    || (r.bottom() == best_bottom && self.skylines[i].w < best_width)
-                {
-                    best_bottom = r.bottom();
-                    best_width = self.skylines[i].w;
-                    best_index = Some(i);
-                    best_rect = r;
-                    best_rot = false;
-                }
+            if let Some(r) = self.can_put(i, w, h)
+                && (r.bottom() < best_bottom
+                    || (r.bottom() == best_bottom && self.skylines[i].w < best_width))
+            {
+                best_bottom = r.bottom();
+                best_width = self.skylines[i].w;
+                best_index = Some(i);
+                best_rect = r;
+                best_rot = false;
             }
-            if self.config.allow_rotation {
-                if let Some(r) = self.can_put(i, h, w) {
-                    if r.bottom() < best_bottom
-                        || (r.bottom() == best_bottom && self.skylines[i].w < best_width)
-                    {
-                        best_bottom = r.bottom();
-                        best_width = self.skylines[i].w;
-                        best_index = Some(i);
-                        best_rect = r;
-                        best_rot = true;
-                    }
-                }
+            if self.config.allow_rotation
+                && let Some(r) = self.can_put(i, h, w)
+                && (r.bottom() < best_bottom
+                    || (r.bottom() == best_bottom && self.skylines[i].w < best_width))
+            {
+                best_bottom = r.bottom();
+                best_width = self.skylines[i].w;
+                best_index = Some(i);
+                best_rect = r;
+                best_rot = true;
             }
         }
         best_index.map(|idx| (idx, best_rect, best_rot))
@@ -159,16 +156,16 @@ impl SkylinePacker {
                     best_rot = false;
                 }
             }
-            if self.config.allow_rotation {
-                if let Some(r) = self.can_put(i, h, w) {
-                    let waste = self.wasted_area_for(i, &r);
-                    if waste < best_waste || (waste == best_waste && r.bottom() < best_bottom) {
-                        best_waste = waste;
-                        best_bottom = r.bottom();
-                        best_index = Some(i);
-                        best_rect = r;
-                        best_rot = true;
-                    }
+            if self.config.allow_rotation
+                && let Some(r) = self.can_put(i, h, w)
+            {
+                let waste = self.wasted_area_for(i, &r);
+                if waste < best_waste || (waste == best_waste && r.bottom() < best_bottom) {
+                    best_waste = waste;
+                    best_bottom = r.bottom();
+                    best_index = Some(i);
+                    best_rect = r;
+                    best_rot = true;
                 }
             }
         }
@@ -216,11 +213,12 @@ impl SkylinePacker {
         }
         let mut merged: Vec<SkylineNode> = Vec::with_capacity(self.skylines.len());
         for node in self.skylines.iter().copied() {
-            if let Some(last) = merged.last_mut() {
-                if last.y == node.y && last.right_ex() == node.x {
-                    last.w = last.w.saturating_add(node.w);
-                    continue;
-                }
+            if let Some(last) = merged.last_mut()
+                && last.y == node.y
+                && last.right_ex() == node.x
+            {
+                last.w = last.w.saturating_add(node.w);
+                continue;
             }
             merged.push(node);
         }
@@ -267,10 +265,10 @@ mod tests {
 impl<K: Clone> Packer<K> for SkylinePacker {
     fn can_pack(&self, rect: &Rect) -> bool {
         let geometry = PlacementGeometry::new(rect, &self.config);
-        if let Some(wm) = &self.waste {
-            if wm.can_fit(geometry.reserved_w, geometry.reserved_h) {
-                return true;
-            }
+        if let Some(wm) = &self.waste
+            && wm.can_fit(geometry.reserved_w, geometry.reserved_h)
+        {
+            return true;
         }
         self.find_skyline(geometry.reserved_w, geometry.reserved_h)
             .is_some()
@@ -280,10 +278,10 @@ impl<K: Clone> Packer<K> for SkylinePacker {
         let geometry = PlacementGeometry::new(rect, &self.config);
 
         // Try waste map first
-        if let Some(wm) = &mut self.waste {
-            if let Some((place, rotated)) = wm.try_pack(geometry.reserved_w, geometry.reserved_h) {
-                return Some(geometry.frame(key, *rect, &place, rotated));
-            }
+        if let Some(wm) = &mut self.waste
+            && let Some((place, rotated)) = wm.try_pack(geometry.reserved_w, geometry.reserved_h)
+        {
+            return Some(geometry.frame(key, *rect, &place, rotated));
         }
 
         if let Some((i, place, rotated)) =

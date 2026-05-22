@@ -237,19 +237,19 @@ fn render_output_page(
     for packed_frame in &packed_page.frames {
         let prep = &prepared[packed_frame.item_index];
         let f = &packed_frame.frame;
-        crate::compositing::blit_rgba(
-            &prep.payload,
-            &mut canvas,
-            f.frame.x,
-            f.frame.y,
+        let dst = crate::compositing::BlitRect::new(f.frame.x, f.frame.y, f.frame.w, f.frame.h);
+        let src = crate::compositing::BlitRect::new(
             prep.source.x,
             prep.source.y,
             prep.source.w,
             prep.source.h,
-            f.rotated,
-            cfg.texture_extrusion,
-            cfg.texture_outlines,
         );
+        let options = crate::compositing::BlitOptions {
+            rotated: f.rotated,
+            extrude: cfg.texture_extrusion,
+            outlines: cfg.texture_outlines,
+        };
+        crate::compositing::blit_rgba(&prep.payload, &mut canvas, dst, src, options);
     }
 
     OutputPage {

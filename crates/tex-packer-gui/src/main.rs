@@ -11,6 +11,7 @@ use state::AppState;
 use std::time::{Duration, Instant};
 use tex_packer_core::prelude::*;
 
+#[derive(Default)]
 struct GuiApp {
     state: AppState,
     // Cache of egui textures for pages, recreated after packing
@@ -19,18 +20,6 @@ struct GuiApp {
     pack_job: Option<std::thread::JoinHandle<Result<(PackOutput, GuiPackStats), String>>>,
     cancel_requested: bool,
     autopack_deadline: Option<Instant>,
-}
-
-impl Default for GuiApp {
-    fn default() -> Self {
-        Self {
-            state: AppState::default(),
-            page_textures: Vec::new(),
-            pack_job: None,
-            cancel_requested: false,
-            autopack_deadline: None,
-        }
-    }
 }
 
 impl eframe::App for GuiApp {
@@ -50,11 +39,12 @@ impl eframe::App for GuiApp {
         }
 
         // Start autopack when deadline hits
-        if let Some(deadline) = self.autopack_deadline {
-            if self.pack_job.is_none() && Instant::now() >= deadline {
-                self.spawn_pack_job();
-                self.autopack_deadline = None;
-            }
+        if let Some(deadline) = self.autopack_deadline
+            && self.pack_job.is_none()
+            && Instant::now() >= deadline
+        {
+            self.spawn_pack_job();
+            self.autopack_deadline = None;
         }
 
         // Handle cancel requests (soft cancel)
@@ -65,30 +55,30 @@ impl eframe::App for GuiApp {
         }
 
         // Poll pack job completion
-        if let Some(handle) = &self.pack_job {
-            if handle.is_finished() {
-                let handle = self.pack_job.take().unwrap();
-                match handle.join().expect("pack job panicked") {
-                    Ok((out, stats)) => {
-                        if !self.cancel_requested {
-                            self.state.result = Some(out);
-                            self.state.stats = Some(stats);
-                            self.page_textures.clear();
-                        }
-                    }
-                    Err(err) => {
-                        if !self.cancel_requested {
-                            self.state.set_error(err);
-                        }
+        if let Some(handle) = &self.pack_job
+            && handle.is_finished()
+        {
+            let handle = self.pack_job.take().unwrap();
+            match handle.join().expect("pack job panicked") {
+                Ok((out, stats)) => {
+                    if !self.cancel_requested {
+                        self.state.result = Some(out);
+                        self.state.stats = Some(stats);
+                        self.page_textures.clear();
                     }
                 }
-                self.state.pack_in_progress = false;
-                self.cancel_requested = false;
-                self.state.dirty_config = false;
-                // If autopack is on and further changes queued during job, rearm debounce
-                if self.state.autopack && self.state.dirty_config {
-                    self.autopack_deadline = Some(Instant::now() + Duration::from_millis(300));
+                Err(err) => {
+                    if !self.cancel_requested {
+                        self.state.set_error(err);
+                    }
                 }
+            }
+            self.state.pack_in_progress = false;
+            self.cancel_requested = false;
+            self.state.dirty_config = false;
+            // If autopack is on and further changes queued during job, rearm debounce
+            if self.state.autopack && self.state.dirty_config {
+                self.autopack_deadline = Some(Instant::now() + Duration::from_millis(300));
             }
         }
 
@@ -100,10 +90,10 @@ impl eframe::App for GuiApp {
                 .filter_map(|f| f.path.clone())
                 .collect()
         });
-        if !dropped.is_empty() {
-            if let Err(e) = self.state.handle_dropped_paths(&dropped) {
-                self.state.set_error(e.to_string());
-            }
+        if !dropped.is_empty()
+            && let Err(e) = self.state.handle_dropped_paths(&dropped)
+        {
+            self.state.set_error(e.to_string());
         }
 
         // Menu bar at top

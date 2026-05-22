@@ -5,11 +5,13 @@ use tex_packer_core::packer::guillotine::GuillotinePacker;
 
 #[test]
 fn guillotine_rotates_when_only_rotated_fits() {
-    let mut cfg = PackerConfig::default();
-    cfg.max_width = 16;
-    cfg.max_height = 12;
-    cfg.allow_rotation = true;
-    cfg.family = AlgorithmFamily::Guillotine;
+    let cfg = PackerConfig {
+        max_width: 16,
+        max_height: 12,
+        allow_rotation: true,
+        family: AlgorithmFamily::Guillotine,
+        ..Default::default()
+    };
 
     let mut p = GuillotinePacker::new(
         cfg,

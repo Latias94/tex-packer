@@ -60,13 +60,13 @@ fn render_plist_hash(manifest: &ExportManifest, page_names: Option<&[String]>) -
             "    <key>pages</key><array>\n{}    </array>\n",
             manifest.pages.iter().map(page_size_xml).collect::<String>()
         ));
-    } else if manifest.pages.len() == 1 {
-        if let Some(p0) = manifest.pages.first() {
-            s.push_str(&format!(
-                "    <key>size</key><string>{{{}, {}}}</string>\n",
-                p0.width, p0.height
-            ));
-        }
+    } else if manifest.pages.len() == 1
+        && let Some(p0) = manifest.pages.first()
+    {
+        s.push_str(&format!(
+            "    <key>size</key><string>{{{}, {}}}</string>\n",
+            p0.width, p0.height
+        ));
     }
 
     s.push_str("  </dict>\n</dict>\n</plist>\n");

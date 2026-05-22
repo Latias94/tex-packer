@@ -121,8 +121,8 @@ fn random_no_overlap_pow2_square() {
         }
         // within page bounds
         for f in &page.frames {
-            assert!(f.frame.right() + 1 <= page.width);
-            assert!(f.frame.bottom() + 1 <= page.height);
+            assert!(f.frame.right() < page.width);
+            assert!(f.frame.bottom() < page.height);
         }
         assert_eq!(page.width, page.height);
         assert!(is_pow2(page.width));

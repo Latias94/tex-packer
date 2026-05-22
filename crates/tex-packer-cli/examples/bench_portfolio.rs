@@ -188,18 +188,18 @@ fn visit_dir(root: &Path, dir: &Path, out: &mut Vec<InputImage>) -> anyhow::Resu
         let p = e.path();
         if p.is_dir() {
             visit_dir(root, &p, out)?;
-        } else if is_image(&p) {
-            if let Ok(img) = load_image(&p) {
-                let rel = p
-                    .strip_prefix(root)
-                    .unwrap_or(&p)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                out.push(InputImage {
-                    key: rel,
-                    image: img,
-                });
-            }
+        } else if is_image(&p)
+            && let Ok(img) = load_image(&p)
+        {
+            let rel = p
+                .strip_prefix(root)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.push(InputImage {
+                key: rel,
+                image: img,
+            });
         }
     }
     Ok(())

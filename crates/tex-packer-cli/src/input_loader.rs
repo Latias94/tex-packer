@@ -56,15 +56,15 @@ fn should_skip(
     exclude: Option<&globset::GlobSet>,
 ) -> bool {
     let normalized = path.to_string_lossy().replace('\\', "/");
-    if let Some(exclude) = exclude {
-        if exclude.is_match(&normalized) {
-            return true;
-        }
+    if let Some(exclude) = exclude
+        && exclude.is_match(&normalized)
+    {
+        return true;
     }
-    if let Some(include) = include {
-        if !include.is_match(&normalized) {
-            return true;
-        }
+    if let Some(include) = include
+        && !include.is_match(&normalized)
+    {
+        return true;
     }
     false
 }

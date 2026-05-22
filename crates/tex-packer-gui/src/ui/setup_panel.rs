@@ -208,10 +208,10 @@ fn render_io_section(ui: &mut egui::Ui, state: &mut AppState) {
 
             ui.add_space(6.0);
             ui.label(format!("Loaded: {} images", state.inputs.len()));
-            if ui.button("Reload").clicked() {
-                if let Err(e) = state.load_inputs() {
-                    state.set_error(e.to_string());
-                }
+            if ui.button("Reload").clicked()
+                && let Err(e) = state.load_inputs()
+            {
+                state.set_error(e.to_string());
             }
         });
 }

@@ -3973,7 +3973,7 @@ dependencies = [
 
 [[package]]
 name = "tex-packer-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3994,7 +3994,7 @@ dependencies = [
 
 [[package]]
 name = "tex-packer-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "image",
@@ -4008,7 +4008,7 @@ dependencies = [
 
 [[package]]
 name = "tex-packer-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "eframe",

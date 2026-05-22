@@ -1,6 +1,7 @@
 use super::Packer;
 use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig};
-use crate::geometry::PlacementGeometry;
+use crate::free_space::{guillotine_score, guillotine_split, merge_adjacent, prune_contained};
+use crate::geometry::{PackingContext, PlacementGeometry};
 use crate::model::{Frame, Rect};
 
 pub struct GuillotinePacker {
@@ -13,32 +14,13 @@ pub struct GuillotinePacker {
 
 impl GuillotinePacker {
     pub fn new(config: PackerConfig, choice: GuillotineChoice, split: GuillotineSplit) -> Self {
-        let pad = config.border_padding;
-        let w = config.max_width.saturating_sub(pad.saturating_mul(2));
-        let h = config.max_height.saturating_sub(pad.saturating_mul(2));
-        let border = Rect::new(pad, pad, w, h);
+        let border = PackingContext::new(&config).usable_area();
         Self {
             config,
             free: vec![border],
             used: Vec::new(),
             choice,
             split,
-        }
-    }
-
-    fn score(choice: &GuillotineChoice, fr: &Rect, w: u32, h: u32) -> i128 {
-        let area_fit = (fr.w as u128 * fr.h as u128) as i128 - (w as u128 * h as u128) as i128;
-        let leftover_h = fr.w as i128 - w as i128;
-        let leftover_v = fr.h as i128 - h as i128;
-        let short_fit = leftover_h.abs().min(leftover_v.abs());
-        let long_fit = leftover_h.abs().max(leftover_v.abs());
-        match choice {
-            GuillotineChoice::BestAreaFit => area_fit,
-            GuillotineChoice::BestShortSideFit => short_fit,
-            GuillotineChoice::BestLongSideFit => long_fit,
-            GuillotineChoice::WorstAreaFit => -area_fit,
-            GuillotineChoice::WorstShortSideFit => -short_fit,
-            GuillotineChoice::WorstLongSideFit => -long_fit,
         }
     }
 
@@ -49,7 +31,7 @@ impl GuillotinePacker {
         let mut best_rot = false;
         for (i, fr) in self.free.iter().enumerate() {
             if fr.w >= w && fr.h >= h {
-                let s = Self::score(&self.choice, fr, w, h);
+                let s = guillotine_score(&self.choice, fr, w, h).0;
                 if s < best_score {
                     best_score = s;
                     best_idx = Some(i);
@@ -58,7 +40,7 @@ impl GuillotinePacker {
                 }
             }
             if self.config.allow_rotation && fr.w >= h && fr.h >= w {
-                let s = Self::score(&self.choice, fr, h, w);
+                let s = guillotine_score(&self.choice, fr, h, w).0;
                 if s < best_score {
                     best_score = s;
                     best_idx = Some(i);
@@ -70,52 +52,10 @@ impl GuillotinePacker {
         best_idx.map(|idx| (idx, best_rect, best_rot))
     }
 
-    fn split(&self, fr: &Rect, placed: &Rect) -> (Option<Rect>, Option<Rect>) {
-        // Compute leftover widths/heights (right/bottom), as in Jylänki's SplitFreeRectAlongAxis.
-        let w_right = (fr.x + fr.w).saturating_sub(placed.x + placed.w);
-        let h_bottom = (fr.y + fr.h).saturating_sub(placed.y + placed.h);
-
-        // Choose split axis based on heuristic comparing leftover along right vs bottom.
-        let split_horizontal = match self.split {
-            GuillotineSplit::SplitShorterLeftoverAxis => h_bottom < w_right,
-            GuillotineSplit::SplitLongerLeftoverAxis => h_bottom > w_right,
-            GuillotineSplit::SplitMinimizeArea => {
-                (w_right as u128 * fr.h as u128) <= (fr.w as u128 * h_bottom as u128)
-            }
-            GuillotineSplit::SplitMaximizeArea => {
-                (w_right as u128 * fr.h as u128) >= (fr.w as u128 * h_bottom as u128)
-            }
-            GuillotineSplit::SplitShorterAxis => fr.h < fr.w,
-            GuillotineSplit::SplitLongerAxis => fr.h > fr.w,
-        };
-
-        // Form the two new rectangles: bottom and right. Dimensions depend on split axis.
-        let mut bottom = Rect::new(fr.x, placed.y + placed.h, 0, fr.h.saturating_sub(placed.h));
-        let mut right = Rect::new(placed.x + placed.w, fr.y, fr.w.saturating_sub(placed.w), 0);
-        if split_horizontal {
-            bottom.w = fr.w;
-            right.h = placed.h;
-        } else {
-            bottom.w = placed.w;
-            right.h = fr.h;
-        }
-        let r1 = if bottom.w > 0 && bottom.h > 0 {
-            Some(bottom)
-        } else {
-            None
-        };
-        let r2 = if right.w > 0 && right.h > 0 {
-            Some(right)
-        } else {
-            None
-        };
-        (r1, r2)
-    }
-
     fn place(&mut self, idx: usize, placed: &Rect) {
         let fr = self.free[idx];
         self.free.swap_remove(idx);
-        let (a, b) = self.split(&fr, placed);
+        let (a, b) = guillotine_split(&self.split, &fr, placed);
         if let Some(r) = a {
             self.free.push(r);
         }
@@ -128,74 +68,11 @@ impl GuillotinePacker {
     }
 
     fn prune_free_list(&mut self) {
-        let mut i = 0;
-        while i < self.free.len() {
-            let mut j = i + 1;
-            let a = self.free[i];
-            let a_x2 = a.x + a.w;
-            let a_y2 = a.y + a.h;
-            let mut remove_i = false;
-            while j < self.free.len() {
-                let b = self.free[j];
-                let b_x2 = b.x + b.w;
-                let b_y2 = b.y + b.h;
-                if a.x >= b.x && a.y >= b.y && a_x2 <= b_x2 && a_y2 <= b_y2 {
-                    remove_i = true;
-                    break;
-                }
-                if b.x >= a.x && b.y >= a.y && b_x2 <= a_x2 && b_y2 <= a_y2 {
-                    self.free.remove(j);
-                    continue;
-                }
-                j += 1;
-            }
-            if remove_i {
-                self.free.remove(i);
-            } else {
-                i += 1;
-            }
-        }
+        prune_contained(&mut self.free);
     }
 
     fn merge_free_list(&mut self) {
-        let mut merged = true;
-        while merged {
-            merged = false;
-            'outer: for i in 0..self.free.len() {
-                for j in i + 1..self.free.len() {
-                    let a = self.free[i];
-                    let b = self.free[j];
-                    // horizontal merge (same y, height, contiguous in x)
-                    if a.y == b.y && a.h == b.h {
-                        if a.x + a.w == b.x {
-                            self.free[i] = Rect::new(a.x, a.y, a.w + b.w, a.h);
-                            self.free.remove(j);
-                            merged = true;
-                            break 'outer;
-                        } else if b.x + b.w == a.x {
-                            self.free[i] = Rect::new(b.x, a.y, a.w + b.w, a.h);
-                            self.free.remove(j);
-                            merged = true;
-                            break 'outer;
-                        }
-                    }
-                    // vertical merge (same x, width, contiguous in y)
-                    if a.x == b.x && a.w == b.w {
-                        if a.y + a.h == b.y {
-                            self.free[i] = Rect::new(a.x, a.y, a.w, a.h + b.h);
-                            self.free.remove(j);
-                            merged = true;
-                            break 'outer;
-                        } else if b.y + b.h == a.y {
-                            self.free[i] = Rect::new(a.x, b.y, a.w, a.h + b.h);
-                            self.free.remove(j);
-                            merged = true;
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-        }
+        merge_adjacent(&mut self.free);
     }
 }
 

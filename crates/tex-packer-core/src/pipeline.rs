@@ -1,6 +1,7 @@
 use crate::config::PackerConfig;
 use crate::config::{AlgorithmFamily, AutoMode, SortOrder};
 use crate::error::{Result, TexPackerError};
+use crate::geometry::PackingContext;
 use crate::model::{Atlas, Frame, Meta, Page, Rect};
 use crate::packer::{
     Packer, guillotine::GuillotinePacker, maxrects::MaxRectsPacker, skyline::SkylinePacker,
@@ -134,24 +135,6 @@ pub fn compute_trim_rect(rgba: &RgbaImage, threshold: u8) -> (Option<Rect>, Rect
     (Some(Rect::new(0, 0, tw, th)), Rect::new(x1, y1, tw, th))
 }
 
-fn next_pow2(mut v: u32) -> u32 {
-    if v <= 1 {
-        return 1;
-    }
-    v -= 1;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    v + 1
-}
-
-#[allow(clippy::too_many_arguments)]
-// moved to compositing::blit_rgba for reuse in runtime
-
-// ---------- helpers for multi-run (auto) ----------
-
 struct PreparedItem<T> {
     key: String,
     payload: T,
@@ -187,6 +170,56 @@ impl PackedPage {
             height: self.height,
             frames: self.public_frames(),
         }
+    }
+}
+
+struct OfflinePipeline<'a> {
+    cfg: &'a PackerConfig,
+}
+
+impl<'a> OfflinePipeline<'a> {
+    fn new(cfg: &'a PackerConfig) -> Self {
+        Self { cfg }
+    }
+
+    fn pack_images(&self, prepared: &[PreparedItem<RgbaImage>]) -> Result<PackOutput> {
+        let packed_pages = self.pack_pages(prepared)?;
+        Ok(self.build_output(prepared, &packed_pages))
+    }
+
+    fn pack_layout<T: Sync>(&self, prepared: &[PreparedItem<T>]) -> Result<Atlas> {
+        let packed_pages = self.pack_pages(prepared)?;
+        Ok(self.build_atlas(&packed_pages))
+    }
+
+    fn pack_pages<T: Sync>(&self, prepared: &[PreparedItem<T>]) -> Result<Vec<PackedPage>> {
+        if matches!(self.cfg.family, AlgorithmFamily::Auto) {
+            return pack_auto_pages(prepared, self.cfg.clone());
+        }
+
+        self.pack_pages_for_family(prepared)
+    }
+
+    fn pack_pages_for_family<T>(&self, prepared: &[PreparedItem<T>]) -> Result<Vec<PackedPage>> {
+        pack_pages_for_family(prepared, self.cfg)
+    }
+
+    fn build_output(
+        &self,
+        prepared: &[PreparedItem<RgbaImage>],
+        packed_pages: &[PackedPage],
+    ) -> PackOutput {
+        let pages = packed_pages
+            .iter()
+            .map(|packed_page| render_output_page(prepared, packed_page, self.cfg))
+            .collect();
+        let atlas = self.build_atlas(packed_pages);
+
+        PackOutput { atlas, pages }
+    }
+
+    fn build_atlas(&self, packed_pages: &[PackedPage]) -> Atlas {
+        build_atlas(packed_pages, self.cfg)
     }
 }
 
@@ -265,19 +298,7 @@ fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], cfg: &PackerConfig) {
 }
 
 fn pack_prepared(prepared: &[PreparedItem<RgbaImage>], cfg: &PackerConfig) -> Result<PackOutput> {
-    let packed_pages = pack_prepared_pages(prepared, cfg)?;
-    Ok(build_pack_output(prepared, &packed_pages, cfg))
-}
-
-fn pack_prepared_pages<T: Sync>(
-    prepared: &[PreparedItem<T>],
-    cfg: &PackerConfig,
-) -> Result<Vec<PackedPage>> {
-    if matches!(cfg.family, AlgorithmFamily::Auto) {
-        return pack_auto_pages(prepared, cfg.clone());
-    }
-
-    pack_pages_for_family(prepared, cfg)
+    OfflinePipeline::new(cfg).pack_images(prepared)
 }
 
 fn pack_pages_for_family<T>(
@@ -360,20 +381,6 @@ fn create_packer(cfg: &PackerConfig) -> Box<dyn Packer<String>> {
         )),
         AlgorithmFamily::Auto => unreachable!(),
     }
-}
-
-fn build_pack_output(
-    prepared: &[PreparedItem<RgbaImage>],
-    packed_pages: &[PackedPage],
-    cfg: &PackerConfig,
-) -> PackOutput {
-    let pages = packed_pages
-        .iter()
-        .map(|packed_page| render_output_page(prepared, packed_page, cfg))
-        .collect();
-    let atlas = build_atlas(packed_pages, cfg);
-
-    PackOutput { atlas, pages }
 }
 
 fn render_output_page(
@@ -573,8 +580,7 @@ pub fn pack_layout<K: Into<String>>(
         .collect();
     sort_prepared(&mut prepared, &cfg);
 
-    let packed_pages = pack_prepared_pages(&prepared, &cfg)?;
-    Ok(build_atlas(&packed_pages, &cfg))
+    OfflinePipeline::new(&cfg).pack_layout(&prepared)
 }
 
 /// Layout-only item with optional source/source_size to propagate trimming metadata.
@@ -618,34 +624,10 @@ pub fn pack_layout_items<K: Into<String>>(
         .collect();
     sort_prepared(&mut prepared, &cfg);
 
-    let packed_pages = pack_prepared_pages(&prepared, &cfg)?;
-    Ok(build_atlas(&packed_pages, &cfg))
+    OfflinePipeline::new(&cfg).pack_layout(&prepared)
 }
 
 /// Compute final page dimensions given placed frames and config.
 fn compute_page_size(frames: &[Frame], cfg: &PackerConfig) -> (u32, u32) {
-    if cfg.force_max_dimensions {
-        // When forced, return exactly the configured dimensions, ignoring pow2/square adjustments.
-        return (cfg.max_width, cfg.max_height);
-    }
-    let pad_half = cfg.texture_padding / 2;
-    let pad_rem = cfg.texture_padding - pad_half;
-    let right_extra = cfg.texture_extrusion + pad_rem;
-    let bottom_extra = cfg.texture_extrusion + pad_rem;
-    let mut page_w = 0u32;
-    let mut page_h = 0u32;
-    for f in frames {
-        page_w = page_w.max(f.frame.right() + 1 + right_extra + cfg.border_padding);
-        page_h = page_h.max(f.frame.bottom() + 1 + bottom_extra + cfg.border_padding);
-    }
-    if cfg.power_of_two {
-        page_w = next_pow2(page_w.max(1));
-        page_h = next_pow2(page_h.max(1));
-    }
-    if cfg.square {
-        let m = page_w.max(page_h);
-        page_w = m;
-        page_h = m;
-    }
-    (page_w, page_h)
+    PackingContext::new(cfg).compute_page_size(frames)
 }

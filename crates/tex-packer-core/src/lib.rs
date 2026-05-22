@@ -26,12 +26,14 @@ pub mod config;
 pub mod error;
 pub mod export;
 pub mod export_plist;
+mod free_space;
 mod geometry;
 pub mod model;
 pub mod packer;
 pub mod pipeline;
 pub mod runtime;
 pub mod runtime_atlas;
+mod runtime_placement;
 
 pub use config::*;
 pub use error::*;

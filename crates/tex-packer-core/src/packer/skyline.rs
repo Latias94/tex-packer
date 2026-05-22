@@ -1,6 +1,11 @@
 use super::Packer;
 use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig, SkylineHeuristic};
-use crate::geometry::PlacementGeometry;
+use crate::free_space::{
+    guillotine_score, merge_adjacent, prune_contained, subtract_intersections,
+};
+use crate::geometry::{
+    PackingContext, PlacementGeometry, contains_rect, right_ex_u32, span_end_ex,
+};
 use crate::model::{Frame, Rect};
 
 #[derive(Clone, Copy, Debug)]
@@ -17,7 +22,11 @@ impl SkylineNode {
     }
     #[inline]
     fn right(&self) -> u32 {
-        self.x + self.w.saturating_sub(1)
+        self.right_ex().saturating_sub(1)
+    }
+    #[inline]
+    fn right_ex(&self) -> u32 {
+        span_end_ex(self.x, self.w)
     }
 }
 
@@ -31,17 +40,19 @@ pub struct SkylinePacker {
 
 impl SkylinePacker {
     pub fn new(config: PackerConfig) -> Self {
-        let pad = config.border_padding;
-        let w = config.max_width.saturating_sub(pad.saturating_mul(2));
-        let h = config.max_height.saturating_sub(pad.saturating_mul(2));
+        let usable = PackingContext::new(&config).usable_area();
         Self {
             config: config.clone(),
-            border: Rect::new(pad, pad, w, h),
-            skylines: vec![SkylineNode { x: pad, y: pad, w }],
+            border: usable,
+            skylines: vec![SkylineNode {
+                x: usable.x,
+                y: usable.y,
+                w: usable.w,
+            }],
             heuristic: config.skyline_heuristic.clone(),
             waste: if config.use_waste_map {
                 Some(WasteMap::new(
-                    Rect::new(pad, pad, w, h),
+                    usable,
                     config.allow_rotation,
                     config.g_choice.clone(),
                     config.g_split.clone(),
@@ -57,7 +68,7 @@ impl SkylinePacker {
         let mut width_left = rect.w;
         loop {
             rect.y = rect.y.max(self.skylines[i].y);
-            if !self.border.contains(&rect) {
+            if !contains_rect(&self.border, &rect) {
                 return None;
             }
             if self.skylines[i].w >= width_left {
@@ -206,8 +217,7 @@ impl SkylinePacker {
         let mut merged: Vec<SkylineNode> = Vec::with_capacity(self.skylines.len());
         for node in self.skylines.iter().copied() {
             if let Some(last) = merged.last_mut() {
-                let last_right_ex = last.x + last.w; // exclusive right
-                if last.y == node.y && last_right_ex == node.x {
+                if last.y == node.y && last.right_ex() == node.x {
                     last.w = last.w.saturating_add(node.w);
                     continue;
                 }
@@ -300,7 +310,7 @@ impl SkylinePacker {
         // exact vertical gap between the segment.y and rect.y into waste-map.
         let wm = self.waste.as_mut().unwrap();
         let rect_left = rect.x;
-        let rect_right = rect.x + rect.w; // exclusive-style right for internal calcs
+        let rect_right = right_ex_u32(rect);
         let mut i = index;
         while i < self.skylines.len() && self.skylines[i].x < rect_right {
             let seg = self.skylines[i];
@@ -308,12 +318,12 @@ impl SkylinePacker {
             if seg.x >= rect_right {
                 break;
             }
-            if seg.x + seg.w <= rect_left {
+            if seg.right_ex() <= rect_left {
                 break;
             }
 
             let left_side = seg.x.max(rect_left);
-            let right_side = (seg.x + seg.w).min(rect_right);
+            let right_side = seg.right_ex().min(rect_right);
             if seg.y < rect.y {
                 // Note: height is the vertical gap between segment top and rect top.
                 let w = right_side.saturating_sub(left_side);
@@ -397,49 +407,7 @@ impl WasteMap {
         // Subtract the placed node from all existing free rectangles to keep the list disjoint.
         let mut new_free: Vec<Rect> = Vec::with_capacity(self.free.len() + 2);
         for fr in self.free.drain(..) {
-            if !intersects(&fr, node) {
-                new_free.push(fr);
-                continue;
-            }
-            let fr_x2 = fr.x + fr.w;
-            let fr_y2 = fr.y + fr.h;
-            let n_x2 = node.x + node.w;
-            let n_y2 = node.y + node.h;
-
-            let ix1 = fr.x.max(node.x);
-            let iy1 = fr.y.max(node.y);
-            let ix2 = fr_x2.min(n_x2);
-            let iy2 = fr_y2.min(n_y2);
-
-            // above
-            if iy1 > fr.y {
-                let h = iy1 - fr.y;
-                new_free.push(Rect::new(fr.x, fr.y, fr.w, h));
-            }
-            // below
-            if iy2 < fr_y2 {
-                let h = fr_y2 - iy2;
-                new_free.push(Rect::new(fr.x, iy2, fr.w, h));
-            }
-            // left strip within overlap band
-            if ix1 > fr.x {
-                let w = ix1 - fr.x;
-                let y = iy1;
-                let h = iy2.saturating_sub(iy1);
-                if h > 0 {
-                    new_free.push(Rect::new(fr.x, y, w, h));
-                }
-            }
-            // right strip within overlap band
-            if ix2 < fr_x2 {
-                let w = fr_x2 - ix2;
-                let x = ix2;
-                let y = iy1;
-                let h = iy2.saturating_sub(iy1);
-                if h > 0 {
-                    new_free.push(Rect::new(x, y, w, h));
-                }
-            }
+            new_free.extend(subtract_intersections([fr], node));
         }
         self.free = new_free;
         self.prune();
@@ -456,99 +424,15 @@ impl WasteMap {
         }
     }
     fn prune(&mut self) {
-        let mut i = 0;
-        while i < self.free.len() {
-            let a = self.free[i];
-            let a_x2 = a.x + a.w;
-            let a_y2 = a.y + a.h;
-            let mut remove_i = false;
-            let mut j = i + 1;
-            while j < self.free.len() {
-                let b = self.free[j];
-                let b_x2 = b.x + b.w;
-                let b_y2 = b.y + b.h;
-                if a.x >= b.x && a.y >= b.y && a_x2 <= b_x2 && a_y2 <= b_y2 {
-                    remove_i = true;
-                    break;
-                }
-                if b.x >= a.x && b.y >= a.y && b_x2 <= a_x2 && b_y2 <= a_y2 {
-                    self.free.remove(j);
-                    continue;
-                }
-                j += 1;
-            }
-            if remove_i {
-                self.free.remove(i);
-            } else {
-                i += 1;
-            }
-        }
+        prune_contained(&mut self.free);
     }
     fn merge(&mut self) {
-        let mut merged = true;
-        while merged {
-            merged = false;
-            'outer: for i in 0..self.free.len() {
-                for j in i + 1..self.free.len() {
-                    let a = self.free[i];
-                    let b = self.free[j];
-                    // horizontal merge (same y, height, contiguous in x)
-                    if a.y == b.y && a.h == b.h {
-                        if a.x + a.w == b.x {
-                            self.free[i] = Rect::new(a.x, a.y, a.w + b.w, a.h);
-                            self.free.remove(j);
-                            merged = true;
-                            break 'outer;
-                        } else if b.x + b.w == a.x {
-                            self.free[i] = Rect::new(b.x, a.y, a.w + b.w, a.h);
-                            self.free.remove(j);
-                            merged = true;
-                            break 'outer;
-                        }
-                    }
-                    // vertical merge (same x, width, contiguous in y)
-                    if a.x == b.x && a.w == b.w {
-                        if a.y + a.h == b.y {
-                            self.free[i] = Rect::new(a.x, a.y, a.w, a.h + b.h);
-                            self.free.remove(j);
-                            merged = true;
-                            break 'outer;
-                        } else if b.y + b.h == a.y {
-                            self.free[i] = Rect::new(a.x, b.y, a.w, a.h + b.h);
-                            self.free.remove(j);
-                            merged = true;
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-        }
+        merge_adjacent(&mut self.free);
     }
 }
 
 fn score_choice(choice: &GuillotineChoice, fr: &Rect, w: u32, h: u32) -> (i128, i128) {
-    let area_fit = (fr.w as u128 * fr.h as u128) as i128 - (w as u128 * h as u128) as i128;
-    let leftover_h = fr.w as i128 - w as i128;
-    let leftover_v = fr.h as i128 - h as i128;
-    let short_fit = leftover_h.abs().min(leftover_v.abs());
-    let long_fit = leftover_h.abs().max(leftover_v.abs());
-    match choice {
-        GuillotineChoice::BestAreaFit => (area_fit, short_fit),
-        GuillotineChoice::BestShortSideFit => (short_fit, long_fit),
-        GuillotineChoice::BestLongSideFit => (long_fit, short_fit),
-        GuillotineChoice::WorstAreaFit => (-area_fit, -short_fit),
-        GuillotineChoice::WorstShortSideFit => (-short_fit, -long_fit),
-        GuillotineChoice::WorstLongSideFit => (-long_fit, -short_fit),
-    }
+    guillotine_score(choice, fr, w, h)
 }
 
 // Note: split_decision was removed; current WasteMap uses subtractive splitting only.
-
-#[inline]
-fn intersects(a: &Rect, b: &Rect) -> bool {
-    let ax2 = a.x + a.w;
-    let ay2 = a.y + a.h;
-    let bx2 = b.x + b.w;
-    let by2 = b.y + b.h;
-    !(a.x >= bx2 || b.x >= ax2 || a.y >= by2 || b.y >= ay2)
-}

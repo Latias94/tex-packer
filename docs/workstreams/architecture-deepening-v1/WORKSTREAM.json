@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "slug": "architecture-deepening-v1",
+  "title": "Architecture Deepening Refactor",
+  "status": "complete",
+  "updated": "2026-05-22",
+  "scope_kind": "execution",
+  "problem": "Core packing correctness depends on leaked geometry, free-space, runtime-placement, and configuration semantics spread across shallow Modules.",
+  "target_state": "Geometry, free-space, runtime placement, validated context, offline pipeline, configuration adapters, and invariant tests are deepened with fresh evidence gates.",
+  "authoritative_docs": [
+    {
+      "role": "design",
+      "path": "docs/workstreams/architecture-deepening-v1/DESIGN.md"
+    },
+    {
+      "role": "execution",
+      "path": "docs/workstreams/architecture-deepening-v1/TODO.md"
+    },
+    {
+      "role": "milestones",
+      "path": "docs/workstreams/architecture-deepening-v1/MILESTONES.md"
+    },
+    {
+      "role": "gates",
+      "path": "docs/workstreams/architecture-deepening-v1/EVIDENCE_AND_GATES.md"
+    },
+    {
+      "role": "handoff",
+      "path": "docs/workstreams/architecture-deepening-v1/HANDOFF.md"
+    }
+  ],
+  "gates": [
+    "cargo fmt --check",
+    "cargo check -p tex-packer-core",
+    "cargo nextest run -p tex-packer-core",
+    "cargo nextest run --workspace"
+  ],
+  "evidence": [
+    "Prior lane final core gate passed 96/96 and workspace gate passed 96/96.",
+    "Core algorithm hardening commit 3c1bdfb was verified with core nextest 99/99 and cargo fmt --check.",
+    "ADP-020 targeted gate passed: cargo nextest run -p tex-packer-core --test algorithm_invariants (4/4).",
+    "ADP-030 targeted gate passed: cargo nextest run -p tex-packer-core --test algorithm_invariants --test boundary_conditions --test skyline_no_rotation --test runtime_skyline (38/38).",
+    "ADP-040 targeted gate passed: cargo nextest run -p tex-packer-core --test algorithm_invariants --test maxrects_determinism --test skyline_waste_map --test runtime_session (8/8).",
+    "ADP-050 targeted gate passed: cargo nextest run -p tex-packer-core --test runtime_session --test runtime_skyline --test runtime_shelf --test runtime_api_improvements --test runtime_atlas_tests --test algorithm_invariants (51/51).",
+    "ADP-060 targeted gate passed: cargo nextest run -p tex-packer-core --test boundary_conditions --test force_max_and_border --test padding_extrude_offsets --test algorithm_invariants (26/26).",
+    "ADP-070 targeted gate passed: cargo nextest run -p tex-packer-core --test layout_vs_images --test pack_stats --test compose_extrude_no_bleed --test algorithm_invariants (18/18).",
+    "ADP-080 targeted gate passed: cargo check -p tex-packer-cli -p tex-packer-gui and cargo nextest run -p tex-packer-core --test boundary_conditions (17/17).",
+    "ADP-090 closeout gates passed: cargo fmt --check, cargo check -p tex-packer-core, cargo nextest run -p tex-packer-core (103/103), cargo nextest run --workspace (103/103)."
+  ],
+  "adr_refs": [],
+  "current_task": "closed",
+  "continue_policy": {
+    "default_action": "closed",
+    "notes": "Architecture-deepening lane is complete. Split any future GUI dead-code cleanup or public API/schema changes into a separate workstream."
+  }
+}

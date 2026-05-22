@@ -1,6 +1,10 @@
 use super::Packer;
 use crate::config::{MaxRectsHeuristic, PackerConfig};
-use crate::geometry::PlacementGeometry;
+use crate::free_space::{prune_contained, subtract_intersections};
+use crate::geometry::{
+    PackingContext, PlacementGeometry, area_fit_score, bottom_ex_u32, contains_rect, intersects,
+    overlap_1d, right_ex_u32,
+};
 use crate::model::{Frame, Rect};
 
 pub struct MaxRectsPacker {
@@ -13,10 +17,7 @@ pub struct MaxRectsPacker {
 
 impl MaxRectsPacker {
     pub fn new(config: PackerConfig, heuristic: MaxRectsHeuristic) -> Self {
-        let pad = config.border_padding;
-        let w = config.max_width.saturating_sub(pad.saturating_mul(2));
-        let h = config.max_height.saturating_sub(pad.saturating_mul(2));
-        let border = Rect::new(pad, pad, w, h);
+        let border = PackingContext::new(&config).usable_area();
         Self {
             config,
             border,
@@ -26,73 +27,11 @@ impl MaxRectsPacker {
         }
     }
 
-    fn rect_right_ex(r: &Rect) -> u32 {
-        r.x + r.w
-    }
-    fn rect_bottom_ex(r: &Rect) -> u32 {
-        r.y + r.h
-    }
-
-    fn intersects(a: &Rect, b: &Rect) -> bool {
-        !(a.x >= Self::rect_right_ex(b)
-            || b.x >= Self::rect_right_ex(a)
-            || a.y >= Self::rect_bottom_ex(b)
-            || b.y >= Self::rect_bottom_ex(a))
-    }
-
     fn place_rect(&mut self, node: &Rect) {
         if self.config.mr_reference {
             return self.place_rect_ref(node);
         }
-        // split all free rectangles that intersect with node
-        let mut new_free: Vec<Rect> = Vec::new();
-        for fr in self.free.iter() {
-            if !Self::intersects(fr, node) {
-                new_free.push(*fr);
-                continue;
-            }
-            let fr_x2 = fr.x + fr.w;
-            let fr_y2 = fr.y + fr.h;
-            let n_x2 = node.x + node.w;
-            let n_y2 = node.y + node.h;
-
-            let ix1 = fr.x.max(node.x);
-            let iy1 = fr.y.max(node.y);
-            let ix2 = fr_x2.min(n_x2);
-            let iy2 = fr_y2.min(n_y2);
-
-            // above
-            if iy1 > fr.y {
-                let h = iy1 - fr.y;
-                new_free.push(Rect::new(fr.x, fr.y, fr.w, h));
-            }
-            // below
-            if iy2 < fr_y2 {
-                let h = fr_y2 - iy2;
-                new_free.push(Rect::new(fr.x, iy2, fr.w, h));
-            }
-            // left
-            if ix1 > fr.x {
-                let w = ix1 - fr.x;
-                let y = iy1;
-                let h = iy2.saturating_sub(iy1);
-                if h > 0 {
-                    new_free.push(Rect::new(fr.x, y, w, h));
-                }
-            }
-            // right
-            if ix2 < fr_x2 {
-                let w = fr_x2 - ix2;
-                let x = ix2;
-                let y = iy1;
-                let h = iy2.saturating_sub(iy1);
-                if h > 0 {
-                    new_free.push(Rect::new(x, y, w, h));
-                }
-            }
-        }
-
-        self.free = new_free;
+        self.free = subtract_intersections(self.free.iter().copied(), node);
         self.prune_free_list();
         self.used.push(*node);
     }
@@ -102,7 +41,7 @@ impl MaxRectsPacker {
         let mut i = 0usize;
         while i < self.free.len() {
             let fr = self.free[i];
-            if Self::intersects(&fr, node) {
+            if intersects(&fr, node) {
                 // remove this free rect; split into parts added to new_free
                 self.free.swap_remove(i);
                 self.split_free_node_ref(fr, node, &mut new_free);
@@ -120,10 +59,10 @@ impl MaxRectsPacker {
     }
 
     fn split_free_node_ref(&self, fr: Rect, node: &Rect, out: &mut Vec<Rect>) {
-        let fr_x2 = fr.x + fr.w;
-        let fr_y2 = fr.y + fr.h;
-        let n_x2 = node.x + node.w;
-        let n_y2 = node.y + node.h;
+        let fr_x2 = right_ex_u32(&fr);
+        let fr_y2 = bottom_ex_u32(&fr);
+        let n_x2 = right_ex_u32(node);
+        let n_y2 = bottom_ex_u32(node);
 
         // Left
         if node.x > fr.x && node.x < fr_x2 {
@@ -152,11 +91,12 @@ impl MaxRectsPacker {
 
     fn prune_new_vs_old(&mut self, new_free: &mut Vec<Rect>) {
         // Remove any new rect fully contained in any existing free rect
-        new_free.retain(|nr| !self.free.iter().any(|of| of.contains(nr)) && nr.w > 0 && nr.h > 0);
+        new_free
+            .retain(|nr| !self.free.iter().any(|of| contains_rect(of, nr)) && nr.w > 0 && nr.h > 0);
         // Remove any existing free rect fully contained in any remaining new rect
         let mut i = 0;
         while i < self.free.len() {
-            if new_free.iter().any(|nr| nr.contains(&self.free[i])) {
+            if new_free.iter().any(|nr| contains_rect(nr, &self.free[i])) {
                 self.free.swap_remove(i);
             } else {
                 i += 1;
@@ -168,8 +108,8 @@ impl MaxRectsPacker {
         let mut i = 0;
         while i < v.len() {
             let a = v[i];
-            let a_x2 = a.x + a.w;
-            let a_y2 = a.y + a.h;
+            let a_x2 = right_ex_u32(&a);
+            let a_y2 = bottom_ex_u32(&a);
             let mut remove_i = false;
             let mut j = 0;
             while j < v.len() {
@@ -178,8 +118,8 @@ impl MaxRectsPacker {
                     continue;
                 }
                 let b = v[j];
-                let b_x2 = b.x + b.w;
-                let b_y2 = b.y + b.h;
+                let b_x2 = right_ex_u32(&b);
+                let b_y2 = bottom_ex_u32(&b);
                 if a.x >= b.x && a.y >= b.y && a_x2 <= b_x2 && a_y2 <= b_y2 {
                     remove_i = true;
                     break;
@@ -195,35 +135,7 @@ impl MaxRectsPacker {
     }
 
     fn prune_free_list(&mut self) {
-        let mut i = 0;
-        while i < self.free.len() {
-            let mut j = i + 1;
-            let a = self.free[i];
-            let a_right = Self::rect_right_ex(&a);
-            let a_bottom = Self::rect_bottom_ex(&a);
-            let mut remove_i = false;
-            while j < self.free.len() {
-                let b = self.free[j];
-                let b_right = Self::rect_right_ex(&b);
-                let b_bottom = Self::rect_bottom_ex(&b);
-                // if a inside b
-                if a.x >= b.x && a.y >= b.y && a_right <= b_right && a_bottom <= b_bottom {
-                    remove_i = true;
-                    break;
-                }
-                // if b inside a
-                if b.x >= a.x && b.y >= a.y && b_right <= a_right && b_bottom <= a_bottom {
-                    self.free.remove(j);
-                    continue;
-                }
-                j += 1;
-            }
-            if remove_i {
-                self.free.remove(i);
-            } else {
-                i += 1;
-            }
-        }
+        prune_contained(&mut self.free);
     }
 
     fn score(&self, fr: &Rect, w: u32, h: u32) -> (i128, i128) {
@@ -231,7 +143,7 @@ impl MaxRectsPacker {
         let leftover_v = fr.h as i128 - h as i128;
         let short_fit = leftover_h.abs().min(leftover_v.abs());
         let long_fit = leftover_h.abs().max(leftover_v.abs());
-        let area_fit = (fr.w as u128 * fr.h as u128) as i128 - (w as u128 * h as u128) as i128;
+        let area_fit = area_fit_score(fr, w, h);
         match self.heuristic {
             MaxRectsHeuristic::BestAreaFit => (area_fit, short_fit),
             MaxRectsHeuristic::BestShortSideFit => (short_fit, long_fit),
@@ -311,31 +223,31 @@ impl MaxRectsPacker {
         let node = Rect::new(x, y, w, h);
         let mut score = 0u64;
         // contact with borders
-        let border_right = self.border.x + self.border.w;
-        let border_bottom = self.border.y + self.border.h;
+        let border_right = right_ex_u32(&self.border);
+        let border_bottom = bottom_ex_u32(&self.border);
         if node.x == self.border.x {
             score += node.h as u64;
         }
         if node.y == self.border.y {
             score += node.w as u64;
         }
-        if node.x + node.w == border_right {
+        if right_ex_u32(&node) == border_right {
             score += node.h as u64;
         }
-        if node.y + node.h == border_bottom {
+        if bottom_ex_u32(&node) == border_bottom {
             score += node.w as u64;
         }
 
         // contact with used rectangles
         for u in &self.used {
             // vertical contact (left/right edges)
-            if node.x == u.x + u.w || u.x == node.x + node.w {
-                let overlap = overlap_1d(node.y, node.y + node.h, u.y, u.y + u.h);
+            if node.x == right_ex_u32(u) || u.x == right_ex_u32(&node) {
+                let overlap = overlap_1d(node.y, bottom_ex_u32(&node), u.y, bottom_ex_u32(u));
                 score += overlap as u64;
             }
             // horizontal contact (top/bottom edges)
-            if node.y == u.y + u.h || u.y == node.y + node.h {
-                let overlap = overlap_1d(node.x, node.x + node.w, u.x, u.x + u.w);
+            if node.y == bottom_ex_u32(u) || u.y == bottom_ex_u32(&node) {
+                let overlap = overlap_1d(node.x, right_ex_u32(&node), u.x, right_ex_u32(u));
                 score += overlap as u64;
             }
         }
@@ -345,12 +257,6 @@ impl MaxRectsPacker {
     pub fn free_list_len(&self) -> usize {
         self.free.len()
     }
-}
-
-fn overlap_1d(a1: u32, a2: u32, b1: u32, b2: u32) -> u32 {
-    let start = a1.max(b1);
-    let end = a2.min(b2);
-    end.saturating_sub(start)
 }
 
 impl<K: Clone> Packer<K> for MaxRectsPacker {

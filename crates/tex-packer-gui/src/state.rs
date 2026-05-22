@@ -280,44 +280,6 @@ impl AppState {
         self.selected_page = 0;
     }
 
-    pub fn do_pack(&mut self) {
-        self.clear_result();
-        self.clear_error();
-
-        if self.inputs.is_empty() {
-            self.set_error("No inputs loaded");
-            return;
-        }
-
-        let inputs: Vec<InputImage> = self
-            .inputs
-            .iter()
-            .map(|i| InputImage {
-                key: i.key.clone(),
-                image: i.image.clone(),
-            })
-            .collect();
-
-        let num_images = inputs.len();
-        let start = std::time::Instant::now();
-
-        match pack_images(inputs, self.cfg.clone()) {
-            Ok(out) => {
-                let pack_time_ms = start.elapsed().as_millis() as u64;
-
-                // Calculate stats
-                let stats = PackStats::from_output(&out, num_images, pack_time_ms);
-                info!("{}", stats.status_string());
-
-                self.stats = Some(stats);
-                self.result = Some(out);
-            }
-            Err(e) => {
-                self.set_error(format!("Pack error: {e:?}"));
-            }
-        }
-    }
-
     pub fn do_export(&mut self) {
         let Some(outdir) = &self.output_dir else {
             self.set_error("Pick an output folder first");

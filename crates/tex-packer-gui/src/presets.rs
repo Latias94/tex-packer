@@ -277,11 +277,6 @@ impl PackerPreset {
         ]
     }
 
-    /// Get preset by index
-    pub fn get(index: usize) -> Option<Self> {
-        Self::all().get(index).cloned()
-    }
-
     /// Get default preset (Quality)
     pub fn default() -> Self {
         Self::quality()

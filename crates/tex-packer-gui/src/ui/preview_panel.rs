@@ -226,6 +226,13 @@ pub fn render(
 
         if let Some(stats) = &state.stats {
             ui.weak(stats.status_string());
+            egui::CollapsingHeader::new("Packing details")
+                .default_open(false)
+                .show(ui, |ui| {
+                    for line in stats.detailed_string().lines() {
+                        ui.label(line);
+                    }
+                });
         }
         if let Some(err) = &state.last_error {
             ui.colored_label(

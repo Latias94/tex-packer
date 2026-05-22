@@ -370,8 +370,8 @@ impl RtPage {
             RtMode::Guillotine { free, choice, .. } => {
                 let mut best_idx = None;
                 let mut best = Rect::new(0, 0, 0, 0);
-                let mut best_s = i32::MAX;
-                let mut best_s2 = i32::MAX;
+                let mut best_s = i128::MAX;
+                let mut best_s2 = i128::MAX;
                 let mut best_rot = false;
                 for (i, fr) in free.iter().enumerate() {
                     if fr.w >= w && fr.h >= h {
@@ -493,10 +493,10 @@ impl RtPage {
     // guillotine prune/split helpers moved to free functions below
 }
 
-fn score_choice(choice: &GuillotineChoice, fr: &Rect, w: u32, h: u32) -> (i32, i32) {
-    let area_fit = (fr.w * fr.h) as i32 - (w * h) as i32;
-    let leftover_h = fr.w as i32 - w as i32;
-    let leftover_v = fr.h as i32 - h as i32;
+fn score_choice(choice: &GuillotineChoice, fr: &Rect, w: u32, h: u32) -> (i128, i128) {
+    let area_fit = (fr.w as u128 * fr.h as u128) as i128 - (w as u128 * h as u128) as i128;
+    let leftover_h = fr.w as i128 - w as i128;
+    let leftover_v = fr.h as i128 - h as i128;
     let short_fit = leftover_h.abs().min(leftover_v.abs());
     let long_fit = leftover_h.abs().max(leftover_v.abs());
     match choice {
@@ -515,8 +515,12 @@ fn split_rect(split: &GuillotineSplit, fr: &Rect, placed: &Rect) -> (Option<Rect
     let split_horizontal = match split {
         GuillotineSplit::SplitShorterLeftoverAxis => h_bottom < w_right,
         GuillotineSplit::SplitLongerLeftoverAxis => h_bottom > w_right,
-        GuillotineSplit::SplitMinimizeArea => (w_right * fr.h) <= (fr.w * h_bottom),
-        GuillotineSplit::SplitMaximizeArea => (w_right * fr.h) >= (fr.w * h_bottom),
+        GuillotineSplit::SplitMinimizeArea => {
+            (w_right as u128 * fr.h as u128) <= (fr.w as u128 * h_bottom as u128)
+        }
+        GuillotineSplit::SplitMaximizeArea => {
+            (w_right as u128 * fr.h as u128) >= (fr.w as u128 * h_bottom as u128)
+        }
         GuillotineSplit::SplitShorterAxis => fr.h < fr.w,
         GuillotineSplit::SplitLongerAxis => fr.h > fr.w,
     };
@@ -817,7 +821,7 @@ fn find_skyline_min_waste(
     w: u32,
     h: u32,
 ) -> Option<(Rect, bool)> {
-    let mut best_waste = i64::MAX;
+    let mut best_waste = u128::MAX;
     let mut best_bottom = u32::MAX;
     let mut best_index: Option<usize> = None;
     let mut best_rect = Rect::new(0, 0, 0, 0);
@@ -851,17 +855,17 @@ fn find_skyline_min_waste(
     best_index.map(|_| (best_rect, best_rot))
 }
 
-fn compute_waste(skylines: &[SkylineNode], start_idx: usize, rect: &Rect) -> i64 {
-    let mut waste = 0i64;
+fn compute_waste(skylines: &[SkylineNode], start_idx: usize, rect: &Rect) -> u128 {
+    let mut waste = 0u128;
     let rect_right = rect.x + rect.w;
     let mut i = start_idx;
     while i < skylines.len() && skylines[i].x < rect_right {
-        if skylines[i].y < rect.bottom() {
+        if rect.y > skylines[i].y {
             let overlap_w = rect_right
                 .min(skylines[i].x + skylines[i].w)
                 .saturating_sub(skylines[i].x.max(rect.x));
-            let overlap_h = rect.bottom().saturating_sub(skylines[i].y);
-            waste += (overlap_w as i64) * (overlap_h as i64);
+            let overlap_h = rect.y.saturating_sub(skylines[i].y);
+            waste += overlap_w as u128 * overlap_h as u128;
         }
         i += 1;
     }
@@ -869,34 +873,40 @@ fn compute_waste(skylines: &[SkylineNode], start_idx: usize, rect: &Rect) -> i64
 }
 
 fn place_skyline(skylines: &mut Vec<SkylineNode>, slot: &Rect) {
-    // Find nodes that intersect with the placed rectangle
-    let mut first_idx = None;
-    let mut last_idx = None;
+    let slot_right = slot.x.saturating_add(slot.w);
+    let Some(mut idx) = skylines
+        .iter()
+        .position(|node| node.x.saturating_add(node.w) > slot.x)
+    else {
+        return;
+    };
 
-    for (i, node) in skylines.iter().enumerate() {
-        if node.x < slot.x + slot.w && node.x + node.w > slot.x {
-            if first_idx.is_none() {
-                first_idx = Some(i);
-            }
-            last_idx = Some(i);
+    if skylines[idx].x < slot.x {
+        skylines[idx].w = slot.x - skylines[idx].x;
+        idx += 1;
+    }
+
+    while idx < skylines.len() && skylines[idx].x < slot_right {
+        let node_right = skylines[idx].x.saturating_add(skylines[idx].w);
+        if node_right <= slot_right {
+            skylines.remove(idx);
+        } else {
+            let shrink = slot_right - skylines[idx].x;
+            skylines[idx].x += shrink;
+            skylines[idx].w -= shrink;
+            break;
         }
     }
 
-    if let (Some(first), Some(last)) = (first_idx, last_idx) {
-        // Create new node at the placed rectangle's top
-        let new_node = SkylineNode {
+    skylines.insert(
+        idx,
+        SkylineNode {
             x: slot.x,
-            y: slot.bottom(),
+            y: slot.y.saturating_add(slot.h),
             w: slot.w,
-        };
-
-        // Remove intersecting nodes and insert new node
-        skylines.drain(first..=last);
-        skylines.insert(first, new_node);
-
-        // Merge adjacent nodes with same height
-        merge_skyline_nodes(skylines);
-    }
+        },
+    );
+    merge_skyline_nodes(skylines);
 }
 
 fn merge_skyline_nodes(skylines: &mut Vec<SkylineNode>) {

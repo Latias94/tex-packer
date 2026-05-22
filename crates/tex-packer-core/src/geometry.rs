@@ -21,12 +21,18 @@ impl PlacementGeometry {
     }
 
     pub fn from_size(content_w: u32, content_h: u32, cfg: &PackerConfig) -> Self {
+        let reserved_extra = cfg
+            .texture_extrusion
+            .saturating_mul(2)
+            .saturating_add(cfg.texture_padding);
         Self {
-            reserved_w: content_w + cfg.texture_padding + cfg.texture_extrusion * 2,
-            reserved_h: content_h + cfg.texture_padding + cfg.texture_extrusion * 2,
+            reserved_w: content_w.saturating_add(reserved_extra),
+            reserved_h: content_h.saturating_add(reserved_extra),
             content_w,
             content_h,
-            offset: cfg.texture_extrusion + cfg.texture_padding / 2,
+            offset: cfg
+                .texture_extrusion
+                .saturating_add(cfg.texture_padding / 2),
         }
     }
 

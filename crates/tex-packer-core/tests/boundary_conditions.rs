@@ -303,3 +303,23 @@ fn test_many_small_textures() {
     let output = result.unwrap();
     assert!(!output.atlas.pages.is_empty());
 }
+
+#[test]
+fn test_large_layout_dimensions_do_not_overflow_algorithm_scores() {
+    let cfg = PackerConfig {
+        max_width: 70_000,
+        max_height: 70_000,
+        border_padding: 0,
+        texture_padding: 0,
+        texture_extrusion: 0,
+        trim: false,
+        family: AlgorithmFamily::MaxRects,
+        ..Default::default()
+    };
+
+    let atlas = pack_layout(vec![("large", 65_000, 65_000)], cfg)
+        .expect("large layout-only rectangle should not overflow score calculations");
+    assert_eq!(atlas.pages.len(), 1);
+    assert_eq!(atlas.pages[0].frames[0].frame.w, 65_000);
+    assert_eq!(atlas.pages[0].frames[0].frame.h, 65_000);
+}

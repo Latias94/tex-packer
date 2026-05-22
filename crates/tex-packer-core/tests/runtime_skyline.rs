@@ -309,3 +309,33 @@ fn test_skyline_many_small_textures() {
     let stats = session.stats();
     println!("Packed 20 small textures: {}", stats.summary());
 }
+
+#[test]
+fn skyline_runtime_preserves_right_side_and_avoids_bottom_overlap() {
+    let cfg = PackerConfig::builder()
+        .with_max_dimensions(10, 10)
+        .allow_rotation(false)
+        .texture_padding(0)
+        .texture_extrusion(0)
+        .build();
+    let mut session =
+        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+
+    let (page_a, a) = session.append("full".into(), 5, 10).expect("append full");
+    assert_eq!(page_a, 0);
+    assert_eq!(a.frame, Rect::new(0, 0, 5, 10));
+
+    let (page_b, b) = session
+        .append("right-side".into(), 5, 1)
+        .expect("append right side");
+    assert_eq!(page_b, 0);
+    assert_eq!(b.frame, Rect::new(5, 0, 5, 1));
+
+    let (page_c, _c) = session
+        .append("too-wide".into(), 6, 1)
+        .expect("append too wide on a new page");
+    assert_eq!(
+        page_c, 1,
+        "6x1 must not overlap the occupied bottom row on page 0"
+    );
+}

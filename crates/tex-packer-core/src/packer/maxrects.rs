@@ -226,28 +226,28 @@ impl MaxRectsPacker {
         }
     }
 
-    fn score(&self, fr: &Rect, w: u32, h: u32) -> (i32, i32) {
-        let leftover_h = fr.w as i32 - w as i32;
-        let leftover_v = fr.h as i32 - h as i32;
+    fn score(&self, fr: &Rect, w: u32, h: u32) -> (i128, i128) {
+        let leftover_h = fr.w as i128 - w as i128;
+        let leftover_v = fr.h as i128 - h as i128;
         let short_fit = leftover_h.abs().min(leftover_v.abs());
         let long_fit = leftover_h.abs().max(leftover_v.abs());
-        let area_fit = (fr.w * fr.h) as i32 - (w * h) as i32;
+        let area_fit = (fr.w as u128 * fr.h as u128) as i128 - (w as u128 * h as u128) as i128;
         match self.heuristic {
             MaxRectsHeuristic::BestAreaFit => (area_fit, short_fit),
             MaxRectsHeuristic::BestShortSideFit => (short_fit, long_fit),
             MaxRectsHeuristic::BestLongSideFit => (long_fit, short_fit),
-            MaxRectsHeuristic::BottomLeft => (fr.y as i32, fr.x as i32),
+            MaxRectsHeuristic::BottomLeft => (fr.y as i128, fr.x as i128),
             MaxRectsHeuristic::ContactPoint => {
                 // maximize contact score: use negative for minimization
                 let contact = self.contact_point_score(fr.x, fr.y, w, h);
-                (-(contact as i32), area_fit)
+                (-(contact as i128), area_fit)
             }
         }
     }
 
     fn find_position(&self, w: u32, h: u32) -> Option<(Rect, bool)> {
-        let mut best_score1 = i32::MAX;
-        let mut best_score2 = i32::MAX;
+        let mut best_score1 = i128::MAX;
+        let mut best_score2 = i128::MAX;
         let mut best_rect = Rect::new(0, 0, 0, 0);
         let mut best_rot = false;
         let mut best_top = u32::MAX; // tie-break: prefer smaller top side (y + h)
@@ -307,23 +307,23 @@ impl MaxRectsPacker {
         }
     }
 
-    fn contact_point_score(&self, x: u32, y: u32, w: u32, h: u32) -> u32 {
+    fn contact_point_score(&self, x: u32, y: u32, w: u32, h: u32) -> u64 {
         let node = Rect::new(x, y, w, h);
-        let mut score = 0u32;
+        let mut score = 0u64;
         // contact with borders
         let border_right = self.border.x + self.border.w;
         let border_bottom = self.border.y + self.border.h;
         if node.x == self.border.x {
-            score += node.h;
+            score += node.h as u64;
         }
         if node.y == self.border.y {
-            score += node.w;
+            score += node.w as u64;
         }
         if node.x + node.w == border_right {
-            score += node.h;
+            score += node.h as u64;
         }
         if node.y + node.h == border_bottom {
-            score += node.w;
+            score += node.w as u64;
         }
 
         // contact with used rectangles
@@ -331,12 +331,12 @@ impl MaxRectsPacker {
             // vertical contact (left/right edges)
             if node.x == u.x + u.w || u.x == node.x + node.w {
                 let overlap = overlap_1d(node.y, node.y + node.h, u.y, u.y + u.h);
-                score += overlap;
+                score += overlap as u64;
             }
             // horizontal contact (top/bottom edges)
             if node.y == u.y + u.h || u.y == node.y + node.h {
                 let overlap = overlap_1d(node.x, node.x + node.w, u.x, u.x + u.w);
-                score += overlap;
+                score += overlap as u64;
             }
         }
         score

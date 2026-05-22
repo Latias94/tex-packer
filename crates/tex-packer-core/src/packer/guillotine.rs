@@ -26,10 +26,10 @@ impl GuillotinePacker {
         }
     }
 
-    fn score(choice: &GuillotineChoice, fr: &Rect, w: u32, h: u32) -> i32 {
-        let area_fit = (fr.w * fr.h) as i32 - (w * h) as i32;
-        let leftover_h = fr.w as i32 - w as i32;
-        let leftover_v = fr.h as i32 - h as i32;
+    fn score(choice: &GuillotineChoice, fr: &Rect, w: u32, h: u32) -> i128 {
+        let area_fit = (fr.w as u128 * fr.h as u128) as i128 - (w as u128 * h as u128) as i128;
+        let leftover_h = fr.w as i128 - w as i128;
+        let leftover_v = fr.h as i128 - h as i128;
         let short_fit = leftover_h.abs().min(leftover_v.abs());
         let long_fit = leftover_h.abs().max(leftover_v.abs());
         match choice {
@@ -44,7 +44,7 @@ impl GuillotinePacker {
 
     fn choose(&self, w: u32, h: u32) -> Option<(usize, Rect, bool)> {
         let mut best_idx = None;
-        let mut best_score = i32::MAX;
+        let mut best_score = i128::MAX;
         let mut best_rect = Rect::new(0, 0, 0, 0);
         let mut best_rot = false;
         for (i, fr) in self.free.iter().enumerate() {
@@ -79,8 +79,12 @@ impl GuillotinePacker {
         let split_horizontal = match self.split {
             GuillotineSplit::SplitShorterLeftoverAxis => h_bottom < w_right,
             GuillotineSplit::SplitLongerLeftoverAxis => h_bottom > w_right,
-            GuillotineSplit::SplitMinimizeArea => (w_right * fr.h) <= (fr.w * h_bottom),
-            GuillotineSplit::SplitMaximizeArea => (w_right * fr.h) >= (fr.w * h_bottom),
+            GuillotineSplit::SplitMinimizeArea => {
+                (w_right as u128 * fr.h as u128) <= (fr.w as u128 * h_bottom as u128)
+            }
+            GuillotineSplit::SplitMaximizeArea => {
+                (w_right as u128 * fr.h as u128) >= (fr.w as u128 * h_bottom as u128)
+            }
             GuillotineSplit::SplitShorterAxis => fr.h < fr.w,
             GuillotineSplit::SplitLongerAxis => fr.h > fr.w,
         };

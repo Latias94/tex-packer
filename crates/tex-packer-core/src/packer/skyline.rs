@@ -114,16 +114,16 @@ impl SkylinePacker {
         best_index.map(|idx| (idx, best_rect, best_rot))
     }
 
-    fn wasted_area_for(&self, start: usize, r: &Rect) -> u32 {
-        let mut area: u32 = 0;
+    fn wasted_area_for(&self, start: usize, r: &Rect) -> u128 {
+        let mut area: u128 = 0;
         let mut width_left = r.w;
         let mut i = start;
         let base_y = r.y;
         while width_left > 0 && i < self.skylines.len() {
             let seg = &self.skylines[i];
             let use_w = width_left.min(seg.w);
-            if seg.y > base_y {
-                area = area.saturating_add((seg.y - base_y) * use_w);
+            if base_y > seg.y {
+                area = area.saturating_add((base_y - seg.y) as u128 * use_w as u128);
             }
             width_left -= use_w;
             i += 1;
@@ -132,7 +132,7 @@ impl SkylinePacker {
     }
 
     fn find_min_waste(&self, w: u32, h: u32) -> Option<(usize, Rect, bool)> {
-        let mut best_waste = u32::MAX;
+        let mut best_waste = u128::MAX;
         let mut best_bottom = u32::MAX;
         let mut best_index: Option<usize> = None;
         let mut best_rect = Rect::new(0, 0, 0, 0);
@@ -165,12 +165,7 @@ impl SkylinePacker {
     }
 
     fn split(&mut self, index: usize, rect: &Rect) {
-        // Clamp the new skyline y to border.bottom() to avoid going past the page bottom when the
-        // placed rectangle touches the bottom edge.
-        let mut new_y = rect.bottom().saturating_add(1);
-        if new_y > self.border.bottom() {
-            new_y = self.border.bottom();
-        }
+        let new_y = rect.y.saturating_add(rect.h);
         let skyline = SkylineNode {
             x: rect.x,
             y: new_y,
@@ -178,7 +173,7 @@ impl SkylinePacker {
         };
         // ensure within border
         debug_assert!(skyline.right() <= self.border.right());
-        debug_assert!(skyline.y <= self.border.bottom());
+        debug_assert!(skyline.y <= self.border.y.saturating_add(self.border.h));
 
         self.skylines.insert(index, skyline);
 
@@ -367,8 +362,8 @@ impl WasteMap {
     }
     fn choose(&self, w: u32, h: u32) -> Option<(usize, Rect, bool)> {
         let mut best_idx = None;
-        let mut best_s = i32::MAX;
-        let mut best_s2 = i32::MAX;
+        let mut best_s = i128::MAX;
+        let mut best_s2 = i128::MAX;
         let mut best = Rect::new(0, 0, 0, 0);
         let mut best_rot = false;
         for (i, fr) in self.free.iter().enumerate() {
@@ -531,10 +526,10 @@ impl WasteMap {
     }
 }
 
-fn score_choice(choice: &GuillotineChoice, fr: &Rect, w: u32, h: u32) -> (i32, i32) {
-    let area_fit = (fr.w * fr.h) as i32 - (w * h) as i32;
-    let leftover_h = fr.w as i32 - w as i32;
-    let leftover_v = fr.h as i32 - h as i32;
+fn score_choice(choice: &GuillotineChoice, fr: &Rect, w: u32, h: u32) -> (i128, i128) {
+    let area_fit = (fr.w as u128 * fr.h as u128) as i128 - (w as u128 * h as u128) as i128;
+    let leftover_h = fr.w as i128 - w as i128;
+    let leftover_v = fr.h as i128 - h as i128;
     let short_fit = leftover_h.abs().min(leftover_v.abs());
     let long_fit = leftover_h.abs().max(leftover_v.abs());
     match choice {

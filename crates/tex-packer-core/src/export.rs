@@ -1,11 +1,10 @@
 use crate::export_manifest::ExportManifest;
 use crate::model::Atlas;
-use serde::Serialize;
 use serde_json::{Value, json};
 
 /// Serialize the whole `Atlas` as a JSON object `{ pages, meta }` (array-of-pages style).
 /// Suitable for generic tooling and simple consumption.
-pub fn to_json_array<K: ToString + Clone + Serialize>(atlas: &Atlas<K>) -> Value {
+pub fn to_json_array(atlas: &Atlas) -> Value {
     let manifest = ExportManifest::from_atlas(atlas);
     let pages_val = manifest
         .pages
@@ -40,7 +39,7 @@ pub fn to_json_array<K: ToString + Clone + Serialize>(atlas: &Atlas<K>) -> Value
 /// Flatten frames keyed by name, include page id/size hints.
 /// Shape: `{ frames: { name: { frame, rotated, trimmed, spriteSourceSize, sourceSize, pivot, page, pageSize } }, meta }`.
 /// Compatible with many engine pipelines expecting TexturePacker-like JSON hash.
-pub fn to_json_hash<K: ToString + Clone>(atlas: &Atlas<K>) -> Value {
+pub fn to_json_hash(atlas: &Atlas) -> Value {
     let manifest = ExportManifest::from_atlas(atlas);
     let mut frames = serde_json::Map::new();
     for page in &manifest.pages {

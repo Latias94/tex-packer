@@ -1,64 +1,112 @@
 use serde_json::{Value, json};
-use tex_packer_core::prelude::*;
+use tex_packer_core::{Atlas, AtlasDocument};
 
-fn representative_atlas() -> Atlas<&'static str> {
-    let shared_region = Rect::new(1, 2, 8, 16);
-
-    Atlas {
-        pages: vec![
-            Page {
-                id: 3,
-                width: 64,
-                height: 32,
-                frames: vec![
-                    Frame {
-                        key: "hero",
-                        frame: shared_region,
-                        rotated: true,
-                        trimmed: true,
-                        source: Rect::new(2, 3, 16, 8),
-                        source_size: (20, 12),
-                    },
-                    Frame {
-                        key: "hero&alias",
-                        frame: shared_region,
-                        rotated: true,
-                        trimmed: true,
-                        source: Rect::new(2, 3, 16, 8),
-                        source_size: (20, 12),
-                    },
-                ],
-            },
-            Page {
-                id: 9,
-                width: 32,
-                height: 64,
-                frames: vec![Frame {
-                    key: "enemy",
-                    frame: Rect::new(4, 5, 12, 6),
-                    rotated: false,
-                    trimmed: false,
-                    source: Rect::new(0, 0, 12, 6),
-                    source_size: (12, 6),
-                }],
-            },
-        ],
-        meta: Meta {
-            schema_version: "1".into(),
-            app: "tex-packer-test".into(),
-            version: "0.2.0".into(),
-            format: "RGBA8888".into(),
-            scale: 1.0,
-            power_of_two: false,
-            square: false,
-            max_dim: (64, 64),
-            padding: (1, 2),
-            extrude: 1,
-            allow_rotation: true,
-            trim_mode: "alpha".into(),
-            background_color: Some([1, 2, 3, 4]),
+fn representative_atlas() -> Atlas {
+    let document: AtlasDocument = serde_json::from_value(json!({
+        "schema_version": 2,
+        "meta": {
+            "app": "tex-packer-test",
+            "version": "0.2.0",
+            "format": "RGBA8888",
+            "scale": 1.0,
+            "power_of_two": false,
+            "square": false,
+            "max_dimensions": [64, 64],
+            "padding": [1, 2],
+            "extrude": 1,
+            "allow_rotation": true,
+            "trim_mode": "alpha",
+            "background_color": [1, 2, 3, 4]
         },
-    }
+        "pages": [
+            {
+                "id": 3,
+                "width": 64,
+                "height": 32,
+                "regions": [{
+                    "id": 7,
+                    "content": {"x": 1, "y": 2, "w": 8, "h": 16},
+                    "allocation": {"x": 1, "y": 2, "w": 8, "h": 16},
+                    "rotated": true
+                }],
+                "frames": [
+                    {
+                        "id": 11,
+                        "key": "hero",
+                        "region_id": 7,
+                        "trimmed": true,
+                        "source": {"x": 2, "y": 3, "w": 16, "h": 8},
+                        "source_size": [20, 12]
+                    },
+                    {
+                        "id": 12,
+                        "key": "hero&alias",
+                        "region_id": 7,
+                        "trimmed": true,
+                        "source": {"x": 2, "y": 3, "w": 16, "h": 8},
+                        "source_size": [20, 12]
+                    }
+                ]
+            },
+            {
+                "id": 9,
+                "width": 32,
+                "height": 64,
+                "regions": [{
+                    "id": 4,
+                    "content": {"x": 4, "y": 5, "w": 12, "h": 6},
+                    "allocation": {"x": 4, "y": 5, "w": 12, "h": 6},
+                    "rotated": false
+                }],
+                "frames": [{
+                    "id": 2,
+                    "key": "enemy",
+                    "region_id": 4,
+                    "trimmed": false,
+                    "source": {"x": 0, "y": 0, "w": 12, "h": 6},
+                    "source_size": [12, 6]
+                }]
+            }
+        ]
+    }))
+    .expect("representative native atlas document should deserialize");
+
+    document
+        .try_into_atlas()
+        .expect("representative native atlas document should be valid")
+}
+
+fn atlas_with_duplicate_keys() -> Atlas {
+    let mut document_value =
+        serde_json::to_value(AtlasDocument::from_atlas(&representative_atlas()))
+            .expect("native atlas document should serialize");
+    let first_page = document_value["pages"][0]
+        .as_object_mut()
+        .expect("first page should be an object");
+    first_page["regions"]
+        .as_array_mut()
+        .expect("regions should be an array")
+        .push(json!({
+            "id": 8,
+            "content": {"x": 20, "y": 4, "w": 5, "h": 7},
+            "allocation": {"x": 20, "y": 4, "w": 5, "h": 7},
+            "rotated": false
+        }));
+    let alias = first_page["frames"]
+        .as_array_mut()
+        .expect("frames should be an array")
+        .get_mut(1)
+        .expect("representative atlas should contain an alias");
+    alias["key"] = json!("hero");
+    alias["region_id"] = json!(8);
+    alias["trimmed"] = json!(false);
+    alias["source"] = json!({"x": 0, "y": 0, "w": 5, "h": 7});
+    alias["source_size"] = json!([5, 7]);
+
+    serde_json::from_value::<AtlasDocument>(document_value)
+        .expect("duplicate-key native atlas document should deserialize")
+        .try_into_atlas()
+        .expect("duplicate user keys should remain valid logical identities")
 }
 
 fn expected_meta() -> Value {
@@ -210,6 +258,96 @@ fn json_hash_preserves_alias_geometry_and_page_metadata() {
         .map(String::as_str)
         .collect::<Vec<_>>();
     assert_eq!(frame_keys, ["enemy", "hero", "hero&alias"]);
+}
+
+#[test]
+fn duplicate_keys_are_preserved_in_arrays_and_later_values_win_in_hashes() {
+    let atlas = atlas_with_duplicate_keys();
+
+    let array = tex_packer_core::to_json_array(&atlas);
+    let duplicate_frames = array["pages"][0]["frames"]
+        .as_array()
+        .expect("array export should contain logical frames");
+    assert_eq!(duplicate_frames[0]["key"], "hero");
+    assert_eq!(duplicate_frames[1]["key"], "hero");
+    assert_eq!(duplicate_frames[0]["frame"]["x"], 1);
+    assert_eq!(duplicate_frames[1]["frame"]["x"], 20);
+
+    let hash = tex_packer_core::to_json_hash(&atlas);
+    assert_eq!(hash["frames"]["hero"]["frame"]["x"], 20);
+    assert_eq!(
+        hash["frames"]["hero"]["sourceSize"],
+        json!({"w": 5, "h": 7})
+    );
+    assert_eq!(
+        hash["frames"]
+            .as_object()
+            .expect("hash export should contain a frame object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["enemy", "hero"]
+    );
+}
+
+#[test]
+fn template_context_preserves_page_sprite_and_meta_shapes() {
+    let atlas = representative_atlas();
+    let page_names = vec!["atlas_3.png".to_owned(), "atlas_9.png".to_owned()];
+
+    let context = tex_packer_core::to_template_context(&atlas, &page_names);
+    let actual = serde_json::to_value(context).expect("template context should serialize");
+
+    assert_eq!(
+        actual,
+        json!({
+            "pages": [
+                {
+                    "image": "atlas_3.png",
+                    "size": {"w": 64, "h": 32},
+                    "sprites": [
+                        {
+                            "name": "hero",
+                            "frame": {"x": 1, "y": 2, "w": 8, "h": 16},
+                            "rotated": true,
+                            "trimmed": true,
+                            "sprite_source_size": {"x": 2, "y": 3, "w": 16, "h": 8},
+                            "source_size": {"w": 20, "h": 12},
+                            "pivot": {"x": 0.5, "y": 0.5}
+                        },
+                        {
+                            "name": "hero&alias",
+                            "frame": {"x": 1, "y": 2, "w": 8, "h": 16},
+                            "rotated": true,
+                            "trimmed": true,
+                            "sprite_source_size": {"x": 2, "y": 3, "w": 16, "h": 8},
+                            "source_size": {"w": 20, "h": 12},
+                            "pivot": {"x": 0.5, "y": 0.5}
+                        }
+                    ]
+                },
+                {
+                    "image": "atlas_9.png",
+                    "size": {"w": 32, "h": 64},
+                    "sprites": [{
+                        "name": "enemy",
+                        "frame": {"x": 4, "y": 5, "w": 12, "h": 6},
+                        "rotated": false,
+                        "trimmed": false,
+                        "sprite_source_size": {"x": 0, "y": 0, "w": 12, "h": 6},
+                        "source_size": {"w": 12, "h": 6},
+                        "pivot": {"x": 0.5, "y": 0.5}
+                    }]
+                }
+            ],
+            "meta": {
+                "app": "tex-packer-test",
+                "version": "0.2.0",
+                "format": "RGBA8888",
+                "scale": 1.0
+            }
+        })
+    );
 }
 
 #[test]

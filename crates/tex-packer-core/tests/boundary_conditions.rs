@@ -149,7 +149,7 @@ fn test_single_pixel_texture() {
     assert!(result.is_ok());
     let output = result.unwrap();
     assert_eq!(output.pages.len(), 1);
-    assert_eq!(output.atlas.pages[0].frames.len(), 1);
+    assert_eq!(output.atlas.pages()[0].frames().len(), 1);
 }
 
 /// Test very large atlas dimensions (stress test)
@@ -209,7 +209,7 @@ fn test_extreme_padding() {
 
 /// Test zero-sized texture in layout
 #[test]
-fn test_zero_sized_texture_layout() {
+fn test_zero_sized_texture_layout_fails_domain_validation() {
     let cfg = OfflineConfig::default();
     let inputs = vec![
         ("normal".to_string(), 32, 32),
@@ -217,15 +217,7 @@ fn test_zero_sized_texture_layout() {
         ("zero_height".to_string(), 32, 0),
     ];
 
-    let atlas = pack_layout(inputs, cfg).expect("v0.2 accepts zero-sized layout items");
-    assert_eq!(
-        atlas
-            .pages
-            .iter()
-            .map(|page| page.frames.len())
-            .sum::<usize>(),
-        3
-    );
+    assert!(pack_layout(inputs, cfg).is_err());
 }
 
 #[test]
@@ -259,7 +251,7 @@ fn test_many_small_textures() {
     let result = pack_images(inputs, cfg);
     assert!(result.is_ok());
     let output = result.unwrap();
-    assert!(!output.atlas.pages.is_empty());
+    assert!(!output.atlas.pages().is_empty());
 }
 
 #[test]
@@ -275,9 +267,13 @@ fn test_large_layout_dimensions_do_not_overflow_algorithm_scores() {
 
     let atlas = pack_layout(vec![("large", 65_000, 65_000)], cfg)
         .expect("large layout-only rectangle should not overflow score calculations");
-    assert_eq!(atlas.pages.len(), 1);
-    assert_eq!(atlas.pages[0].frames[0].frame.w, 65_000);
-    assert_eq!(atlas.pages[0].frames[0].frame.h, 65_000);
+    assert_eq!(atlas.pages().len(), 1);
+    let resolved = atlas.pages()[0]
+        .resolved_frames()
+        .next()
+        .expect("large frame");
+    assert_eq!(resolved.region().content().w, 65_000);
+    assert_eq!(resolved.region().content().h, 65_000);
 }
 
 fn offline_config(width: u32, height: u32, strategy: PackingStrategy) -> OfflineConfig {

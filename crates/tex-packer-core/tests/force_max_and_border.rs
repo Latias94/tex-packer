@@ -1,16 +1,5 @@
 use tex_packer_core::prelude::*;
 
-fn reserved_slot(f: &Rect, cfg: &PageConfig) -> Rect {
-    let pad_half = cfg.texture_padding() / 2;
-    let off = cfg.texture_extrusion() + pad_half;
-    Rect::new(
-        f.x.saturating_sub(off),
-        f.y.saturating_sub(off),
-        f.w + cfg.texture_extrusion() * 2 + cfg.texture_padding(),
-        f.h + cfg.texture_extrusion() * 2 + cfg.texture_padding(),
-    )
-}
-
 #[test]
 fn force_max_ignores_pow2_and_square() {
     let page = PageConfig::builder()
@@ -26,9 +15,9 @@ fn force_max_ignores_pow2_and_square() {
         .expect("valid offline config");
     let inputs = vec![("a", 10, 10)];
     let atlas = tex_packer_core::pack_layout(inputs, cfg).expect("pack");
-    let p = &atlas.pages[0];
-    assert_eq!(p.width, 300);
-    assert_eq!(p.height, 180);
+    let p = &atlas.pages()[0];
+    assert_eq!(p.width(), 300);
+    assert_eq!(p.height(), 180);
 }
 
 #[test]
@@ -55,7 +44,7 @@ fn border_padding_is_respected_in_pack_images() {
     }
     let out = tex_packer_core::pack_images(inputs, cfg.clone()).expect("pack");
     let page_config = cfg.page_config();
-    for page in &out.atlas.pages {
+    for page in out.atlas.pages() {
         // Logical border rectangle
         let border_rect = Rect::new(
             page_config.border_padding(),
@@ -63,8 +52,8 @@ fn border_padding_is_respected_in_pack_images() {
             page_config.max_width() - page_config.border_padding() * 2,
             page_config.max_height() - page_config.border_padding() * 2,
         );
-        for f in &page.frames {
-            let slot = reserved_slot(&f.frame, page_config);
+        for region in page.regions() {
+            let slot = region.allocation();
             assert!(
                 border_rect.contains(&slot),
                 "reserved slot must stay within border: border={:?} slot={:?}",

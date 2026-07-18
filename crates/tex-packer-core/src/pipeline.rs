@@ -4,7 +4,7 @@ use crate::config::{
 };
 use crate::error::{Result, TexPackerError};
 use crate::geometry::{ContentSize, PhysicalPlacement, bottom_ex_u32, right_ex_u32};
-use crate::model::{Atlas, Frame, Meta, Page, Rect};
+use crate::model::{Atlas, Frame, FrameId, Meta, Page, PageId, Rect, Region, RegionId};
 use crate::packer::PlacementEngine;
 use crate::packing_plan::PackingPlan;
 use crate::preparation::{PreparedItem, prepare_images, prepare_layout, prepare_layout_items};
@@ -71,49 +71,99 @@ struct PackedRegion {
 }
 
 impl PackedRegion {
-    fn logical_frame<T>(&self, prepared: &[PreparedItem<T>], item_index: usize) -> Frame {
+    fn to_region(&self, id: RegionId) -> Region {
+        Region::new(id, self.content, self.allocation, self.rotated)
+    }
+
+    fn logical_frame<T>(
+        &self,
+        prepared: &[PreparedItem<T>],
+        item_index: usize,
+        frame_id: FrameId,
+        region_id: RegionId,
+    ) -> Frame {
         let item = &prepared[item_index];
-        Frame {
-            key: item.key.clone(),
-            frame: self.content,
-            rotated: self.rotated,
-            trimmed: item.trimmed,
-            source: item.source,
-            source_size: item.orig_size,
-        }
+        Frame::new(
+            frame_id,
+            item.key.clone(),
+            region_id,
+            item.trimmed,
+            item.source,
+            item.orig_size,
+        )
     }
 }
 
 #[derive(Clone)]
 struct PackedPage {
-    id: usize,
+    id: PageId,
     width: u32,
     height: u32,
     regions: Vec<PackedRegion>,
 }
 
 impl PackedPage {
-    fn public_frames<T>(&self, prepared: &[PreparedItem<T>]) -> Vec<Frame> {
-        let mut frames = self
+    fn to_page<T>(&self, prepared: &[PreparedItem<T>]) -> Result<Page> {
+        let regions = self
             .regions
             .iter()
-            .flat_map(|region| {
+            .enumerate()
+            .map(|(region_index, packed_region)| {
+                let region_id = checked_region_id(self.id, region_index)?;
+                Ok(packed_region.to_region(region_id))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut logical_items = self
+            .regions
+            .iter()
+            .enumerate()
+            .flat_map(|(region_index, region)| {
                 std::iter::once(region.canonical_item_index)
                     .chain(region.alias_item_indices.iter().copied())
-                    .map(|item_index| (item_index, region.logical_frame(prepared, item_index)))
+                    .map(move |item_index| (item_index, region_index))
             })
             .collect::<Vec<_>>();
-        frames.sort_by_key(|(item_index, _)| *item_index);
-        frames.into_iter().map(|(_, frame)| frame).collect()
-    }
+        logical_items.sort_by_key(|(item_index, _)| *item_index);
 
-    fn to_page<T>(&self, prepared: &[PreparedItem<T>]) -> Page {
-        Page {
-            id: self.id,
-            width: self.width,
-            height: self.height,
-            frames: self.public_frames(prepared),
-        }
+        let frames = logical_items
+            .into_iter()
+            .enumerate()
+            .map(|(frame_index, (item_index, region_index))| {
+                let frame_id = checked_frame_id(self.id, frame_index)?;
+                let region_id = checked_region_id(self.id, region_index)?;
+                Ok(self.regions[region_index]
+                    .logical_frame(prepared, item_index, frame_id, region_id))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Page::try_new(self.id, self.width, self.height, regions, frames)
+    }
+}
+
+fn checked_page_id(page_index: usize) -> Result<PageId> {
+    u32::try_from(page_index)
+        .map(PageId::new)
+        .map_err(|_| identity_overflow("page", page_index, None))
+}
+
+fn checked_region_id(page_id: PageId, region_index: usize) -> Result<RegionId> {
+    u32::try_from(region_index)
+        .map(RegionId::new)
+        .map_err(|_| identity_overflow("region", region_index, Some(page_id)))
+}
+
+fn checked_frame_id(page_id: PageId, frame_index: usize) -> Result<FrameId> {
+    u32::try_from(frame_index)
+        .map(FrameId::new)
+        .map_err(|_| identity_overflow("frame", frame_index, Some(page_id)))
+}
+
+fn identity_overflow(kind: &str, index: usize, page_id: Option<PageId>) -> TexPackerError {
+    let context = page_id.map_or_else(|| "atlas".to_string(), |id| format!("page {id}"));
+    TexPackerError::InvariantViolation {
+        context,
+        reason: format!("{kind} index {index} exceeds the u32 identity range"),
     }
 }
 
@@ -218,13 +268,13 @@ impl<'a> OfflinePipeline<'a> {
     fn pack_images(&self, prepared: &[PreparedItem<RgbaImage>]) -> Result<PackOutput> {
         let plan = PackingPlan::deduplicated(prepared);
         let packed_pages = self.pack_pages(prepared, &plan)?;
-        Ok(self.build_output(prepared, &packed_pages))
+        self.build_output(prepared, &packed_pages)
     }
 
     fn pack_layout<T: Sync>(&self, prepared: &[PreparedItem<T>]) -> Result<Atlas> {
         let plan = PackingPlan::one_per_item(prepared.len());
         let packed_pages = self.pack_pages(prepared, &plan)?;
-        Ok(self.build_atlas(prepared, &packed_pages))
+        self.build_atlas(prepared, &packed_pages)
     }
 
     fn pack_pages<T: Sync>(
@@ -264,17 +314,29 @@ impl<'a> OfflinePipeline<'a> {
         &self,
         prepared: &[PreparedItem<RgbaImage>],
         packed_pages: &[PackedPage],
-    ) -> PackOutput {
+    ) -> Result<PackOutput> {
+        let atlas = self.build_atlas(prepared, packed_pages)?;
         let pages = packed_pages
             .iter()
-            .map(|packed_page| render_output_page(prepared, packed_page, self.config))
-            .collect();
-        let atlas = self.build_atlas(prepared, packed_pages);
+            .map(|packed_page| {
+                let page = atlas.page(packed_page.id).cloned().ok_or_else(|| {
+                    TexPackerError::InvariantViolation {
+                        context: format!("page {}", packed_page.id),
+                        reason: "rendered page does not resolve in the validated atlas".into(),
+                    }
+                })?;
+                Ok(render_output_page(prepared, packed_page, self.config, page))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        PackOutput { atlas, pages }
+        Ok(PackOutput { atlas, pages })
     }
 
-    fn build_atlas<T>(&self, prepared: &[PreparedItem<T>], packed_pages: &[PackedPage]) -> Atlas {
+    fn build_atlas<T>(
+        &self,
+        prepared: &[PreparedItem<T>],
+        packed_pages: &[PackedPage],
+    ) -> Result<Atlas> {
         build_atlas(prepared, packed_pages, self.config)
     }
 }
@@ -295,7 +357,6 @@ fn pack_pages_for_strategy<T>(
 ) -> Result<Vec<PackedPage>> {
     let mut pages: Vec<PackedPage> = Vec::new();
     let mut remaining: Vec<usize> = (0..plan.len()).collect();
-    let mut page_id = 0usize;
 
     while !remaining.is_empty() {
         let mut engine = create_engine(page_config, strategy)?;
@@ -346,6 +407,7 @@ fn pack_pages_for_strategy<T>(
         }
 
         let (page_w, page_h) = page_sizing.compute(&regions);
+        let page_id = checked_page_id(pages.len())?;
 
         pages.push(PackedPage {
             id: page_id,
@@ -353,7 +415,6 @@ fn pack_pages_for_strategy<T>(
             height: page_h,
             regions,
         });
-        page_id += 1;
     }
 
     Ok(pages)
@@ -371,6 +432,7 @@ fn render_output_page(
     prepared: &[PreparedItem<RgbaImage>],
     packed_page: &PackedPage,
     config: &OfflineConfig,
+    page: Page,
 ) -> OutputPage {
     let page_config = config.page_config();
     let mut canvas = RgbaImage::new(packed_page.width, packed_page.height);
@@ -396,47 +458,32 @@ fn render_output_page(
         crate::compositing::blit_rgba(&prep.payload, &mut canvas, dst, src, options);
     }
 
-    OutputPage {
-        page: packed_page.to_page(prepared),
-        rgba: canvas,
-    }
+    OutputPage { page, rgba: canvas }
 }
 
 fn build_atlas<T>(
     prepared: &[PreparedItem<T>],
     packed_pages: &[PackedPage],
     config: &OfflineConfig,
-) -> Atlas {
+) -> Result<Atlas> {
     let page_config = config.page_config();
     let atlas_pages = packed_pages
         .iter()
         .map(|page| page.to_page(prepared))
-        .collect();
-    let meta = Meta {
-        schema_version: "1".into(),
-        app: "tex-packer".into(),
-        version: env!("CARGO_PKG_VERSION").into(),
-        format: "RGBA8888".into(),
-        scale: 1.0,
-        power_of_two: config.power_of_two(),
-        square: config.square(),
-        max_dim: page_config.max_dimensions(),
-        padding: (page_config.border_padding(), page_config.texture_padding()),
-        extrude: page_config.texture_extrusion(),
-        allow_rotation: page_config.allow_rotation(),
-        trim_mode: if config.trim_enabled() {
-            "trim"
-        } else {
-            "none"
-        }
-        .into(),
-        background_color: None,
+        .collect::<Result<Vec<_>>>()?;
+    let trim_mode = if config.trim_enabled() {
+        "trim"
+    } else {
+        "none"
     };
+    let meta = Meta::for_run(
+        page_config,
+        config.power_of_two(),
+        config.square(),
+        trim_mode,
+    );
 
-    Atlas {
-        pages: atlas_pages,
-        meta,
-    }
+    Atlas::try_new(atlas_pages, meta)
 }
 
 fn total_packed_area(pages: &[PackedPage]) -> u64 {
@@ -566,7 +613,7 @@ fn auto_candidates(mode: AutoMode, enable_mr_ref: bool) -> Vec<PackingStrategy> 
 pub fn pack_layout<K: Into<String>>(
     inputs: Vec<(K, u32, u32)>,
     config: OfflineConfig,
-) -> Result<Atlas<String>> {
+) -> Result<Atlas> {
     if inputs.is_empty() {
         return Err(TexPackerError::Empty);
     }
@@ -590,7 +637,7 @@ pub struct LayoutItem<K = String> {
 pub fn pack_layout_items<K: Into<String>>(
     items: Vec<LayoutItem<K>>,
     config: OfflineConfig,
-) -> Result<Atlas<String>> {
+) -> Result<Atlas> {
     if items.is_empty() {
         return Err(TexPackerError::Empty);
     }

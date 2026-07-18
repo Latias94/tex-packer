@@ -5,12 +5,29 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone)]
 pub(crate) struct ExportManifest {
     pub(crate) pages: Vec<ExportPage>,
-    pub(crate) meta: Meta,
+    pub(crate) meta: ExportMeta,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ExportMeta {
+    pub(crate) schema_version: &'static str,
+    pub(crate) app: String,
+    pub(crate) version: String,
+    pub(crate) format: String,
+    pub(crate) scale: f32,
+    pub(crate) power_of_two: bool,
+    pub(crate) square: bool,
+    pub(crate) max_dim: (u32, u32),
+    pub(crate) padding: (u32, u32),
+    pub(crate) extrude: u32,
+    pub(crate) allow_rotation: bool,
+    pub(crate) trim_mode: String,
+    pub(crate) background_color: Option<[u8; 4]>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExportPage {
-    pub(crate) id: usize,
+    pub(crate) id: u32,
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) image: String,
@@ -26,52 +43,53 @@ pub(crate) struct ExportFrame {
     pub(crate) sprite_source_size: Rect,
     pub(crate) source_size: (u32, u32),
     pub(crate) pivot: (f32, f32),
-    pub(crate) page: usize,
+    pub(crate) page: u32,
     pub(crate) page_size: (u32, u32),
 }
 
 impl ExportManifest {
-    pub(crate) fn from_atlas<K: ToString + Clone>(atlas: &Atlas<K>) -> Self {
+    pub(crate) fn from_atlas(atlas: &Atlas) -> Self {
         let default_page_names: Vec<String> = atlas
-            .pages
+            .pages()
             .iter()
-            .map(|page| format!("page_{}.png", page.id))
+            .map(|page| format!("page_{}.png", page.id().get()))
             .collect();
         Self::from_atlas_with_page_names(atlas, &default_page_names)
     }
 
-    pub(crate) fn from_atlas_with_page_names<K: ToString + Clone>(
-        atlas: &Atlas<K>,
-        page_names: &[String],
-    ) -> Self {
+    pub(crate) fn from_atlas_with_page_names(atlas: &Atlas, page_names: &[String]) -> Self {
         let pages = atlas
-            .pages
+            .pages()
             .iter()
             .enumerate()
             .map(|(idx, page)| {
+                let page_id = page.id().get();
                 let image = page_names
                     .get(idx)
                     .cloned()
-                    .unwrap_or_else(|| format!("page_{}.png", page.id));
+                    .unwrap_or_else(|| format!("page_{page_id}.png"));
                 let frames = page
-                    .frames
-                    .iter()
-                    .map(|frame| ExportFrame {
-                        key: frame.key.to_string(),
-                        frame: frame.frame,
-                        rotated: frame.rotated,
-                        trimmed: frame.trimmed,
-                        sprite_source_size: frame.source,
-                        source_size: frame.source_size,
-                        pivot: (0.5, 0.5),
-                        page: page.id,
-                        page_size: (page.width, page.height),
+                    .resolved_frames()
+                    .map(|resolved| {
+                        let frame = resolved.frame();
+                        let region = resolved.region();
+                        ExportFrame {
+                            key: frame.key().to_owned(),
+                            frame: region.content(),
+                            rotated: region.rotated(),
+                            trimmed: frame.trimmed(),
+                            sprite_source_size: frame.source(),
+                            source_size: frame.source_size(),
+                            pivot: (0.5, 0.5),
+                            page: resolved.page_id().get(),
+                            page_size: resolved.page_size(),
+                        }
                     })
                     .collect();
                 ExportPage {
-                    id: page.id,
-                    width: page.width,
-                    height: page.height,
+                    id: page_id,
+                    width: page.width(),
+                    height: page.height(),
                     image,
                     frames,
                 }
@@ -80,7 +98,27 @@ impl ExportManifest {
 
         Self {
             pages,
-            meta: atlas.meta.clone(),
+            meta: ExportMeta::from(atlas.meta()),
+        }
+    }
+}
+
+impl From<&Meta> for ExportMeta {
+    fn from(meta: &Meta) -> Self {
+        Self {
+            schema_version: "1",
+            app: meta.app().to_owned(),
+            version: meta.version().to_owned(),
+            format: meta.format().to_owned(),
+            scale: meta.scale(),
+            power_of_two: meta.power_of_two(),
+            square: meta.square(),
+            max_dim: meta.max_dimensions(),
+            padding: meta.padding(),
+            extrude: meta.extrude(),
+            allow_rotation: meta.allow_rotation(),
+            trim_mode: meta.trim_mode().to_owned(),
+            background_color: meta.background_color(),
         }
     }
 }
@@ -139,10 +177,7 @@ pub struct TemplateSprite {
     pub pivot: Value,
 }
 
-pub fn to_template_context<K: ToString + Clone>(
-    atlas: &Atlas<K>,
-    page_names: &[String],
-) -> TemplateContext {
+pub fn to_template_context(atlas: &Atlas, page_names: &[String]) -> TemplateContext {
     let manifest = ExportManifest::from_atlas_with_page_names(atlas, page_names);
     let pages = manifest
         .pages

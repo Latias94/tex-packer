@@ -52,12 +52,12 @@ fn extrude_does_not_bleed_across_neighbors() {
     // Find frames
     let mut red_f = None;
     let mut green_f = None;
-    for f in &page.page.frames {
-        if f.key == "red" {
-            red_f = Some(f);
+    for resolved in page.page.resolved_frames() {
+        if resolved.frame().key() == "red" {
+            red_f = Some(resolved.region().content());
         }
-        if f.key == "green" {
-            green_f = Some(f);
+        if resolved.frame().key() == "green" {
+            green_f = Some(resolved.region().content());
         }
     }
     let red_f = red_f.expect("red frame");
@@ -66,35 +66,29 @@ fn extrude_does_not_bleed_across_neighbors() {
     // Ensure there's at least one pixel gap between content frames (due to padding/extrude reservations)
     // and check border pixels adjacent to content are of correct color (i.e., extruded from the same content,
     // not contaminated by the neighbor).
-    let _red_edge = (
-        red_f.frame.x + red_f.frame.w - 1,
-        red_f.frame.y + red_f.frame.h - 1,
-    );
-    let _green_edge = (
-        green_f.frame.x + green_f.frame.w - 1,
-        green_f.frame.y + green_f.frame.h - 1,
-    );
+    let _red_edge = (red_f.x + red_f.w - 1, red_f.y + red_f.h - 1);
+    let _green_edge = (green_f.x + green_f.w - 1, green_f.y + green_f.h - 1);
     // Sample a few pixels just outside content area (if within bounds) and ensure they match the owner's color
     let sample = |x: u32, y: u32| -> [u8; 4] { rgba.get_pixel(x, y).0 };
 
     // Right of red content
-    if red_f.frame.x + red_f.frame.w + 1 < rgba.width() {
-        let p = sample(red_f.frame.x + red_f.frame.w, red_f.frame.y);
+    if red_f.x + red_f.w + 1 < rgba.width() {
+        let p = sample(red_f.x + red_f.w, red_f.y);
         assert_eq!(p, [255, 0, 0, 255]);
     }
     // Below red content
-    if red_f.frame.y + red_f.frame.h + 1 < rgba.height() {
-        let p = sample(red_f.frame.x, red_f.frame.y + red_f.frame.h);
+    if red_f.y + red_f.h + 1 < rgba.height() {
+        let p = sample(red_f.x, red_f.y + red_f.h);
         assert_eq!(p, [255, 0, 0, 255]);
     }
     // Right of green content
-    if green_f.frame.x + green_f.frame.w + 1 < rgba.width() {
-        let p = sample(green_f.frame.x + green_f.frame.w, green_f.frame.y);
+    if green_f.x + green_f.w + 1 < rgba.width() {
+        let p = sample(green_f.x + green_f.w, green_f.y);
         assert_eq!(p, [0, 255, 0, 255]);
     }
     // Below green content
-    if green_f.frame.y + green_f.frame.h + 1 < rgba.height() {
-        let p = sample(green_f.frame.x, green_f.frame.y + green_f.frame.h);
+    if green_f.y + green_f.h + 1 < rgba.height() {
+        let p = sample(green_f.x, green_f.y + green_f.h);
         assert_eq!(p, [0, 255, 0, 255]);
     }
 }

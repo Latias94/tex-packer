@@ -45,3 +45,7 @@ criterion = { version = "0.7", features = ["html_reports"] }
 [[bench]]
 name = "runtime_strategies"
 harness = false
+
+[[bench]]
+name = "atlas_resolution"
+harness = false

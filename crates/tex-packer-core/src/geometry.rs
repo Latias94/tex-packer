@@ -1,5 +1,5 @@
 use crate::config::PageConfig;
-use crate::model::{Frame, Rect};
+use crate::model::Rect;
 
 pub(crate) fn usable_area(config: &PageConfig) -> Rect {
     let padding = config.border_padding();
@@ -172,23 +172,6 @@ impl PlacementGeometry {
             content: self.content_rect(allocation, rotated),
             allocation,
             rotated,
-        }
-    }
-
-    pub(crate) fn frame<K>(
-        self,
-        key: K,
-        source: Rect,
-        allocation: &Rect,
-        rotated: bool,
-    ) -> Frame<K> {
-        Frame {
-            key,
-            frame: self.content_rect(*allocation, rotated),
-            rotated,
-            trimmed: false,
-            source,
-            source_size: (source.w, source.h),
         }
     }
 }

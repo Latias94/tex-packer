@@ -277,7 +277,7 @@ fn bench_space_efficiency(c: &mut Criterion) {
                         }
 
                         let stats = session.stats();
-                        black_box(stats.occupancy)
+                        black_box(stats.allocation_occupancy)
                     });
                 },
             );

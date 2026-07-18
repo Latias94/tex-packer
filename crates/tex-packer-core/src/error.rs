@@ -14,6 +14,12 @@ pub enum TexPackerError {
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
+    #[error("Atlas invariant violation at {context}: {reason}")]
+    InvariantViolation { context: String, reason: String },
+
+    #[error("Invalid atlas document: {reason}")]
+    InvalidDocument { reason: String },
+
     #[error(
         "Texture '{key}' ({width}x{height}) exceeds maximum atlas dimensions ({max_width}x{max_height})"
     )]

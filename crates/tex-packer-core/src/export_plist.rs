@@ -1,11 +1,10 @@
 use crate::export_manifest::{ExportManifest, ExportPage};
 use crate::model::Atlas;
-use serde::Serialize;
 
 /// Build a basic Apple plist (XML) with frames in a dict keyed by name.
 /// Multi-page atlases include page id and size fields for each frame.
 /// Use `to_plist_hash_with_pages` to inject texture filenames into meta.
-pub fn to_plist_hash<K: ToString + Clone + Serialize>(atlas: &Atlas<K>) -> String {
+pub fn to_plist_hash(atlas: &Atlas) -> String {
     let manifest = ExportManifest::from_atlas(atlas);
     render_plist_hash(&manifest, None)
 }
@@ -114,10 +113,7 @@ fn xml_escape(s: &str) -> String {
 }
 
 /// Same as `to_plist_hash`, but includes single `textureFileName` / multi `textureFileNames` in meta.
-pub fn to_plist_hash_with_pages<K: ToString + Clone + Serialize>(
-    atlas: &Atlas<K>,
-    page_names: &[String],
-) -> String {
+pub fn to_plist_hash_with_pages(atlas: &Atlas, page_names: &[String]) -> String {
     let manifest = ExportManifest::from_atlas_with_page_names(atlas, page_names);
     render_plist_hash(&manifest, Some(page_names))
 }

@@ -22,10 +22,13 @@ fn test_transparent_one_by_one() {
         .expect("valid offline config");
 
     let out = tex_packer_core::pack_images(inputs, cfg).expect("pack");
-    assert_eq!(out.atlas.pages.len(), 1);
-    let f = &out.atlas.pages[0].frames[0];
-    assert_eq!(f.frame.w, 1);
-    assert_eq!(f.frame.h, 1);
+    assert_eq!(out.atlas.pages().len(), 1);
+    let resolved = out.atlas.pages()[0]
+        .resolved_frames()
+        .next()
+        .expect("transparent frame");
+    assert_eq!(resolved.region().content().w, 1);
+    assert_eq!(resolved.region().content().h, 1);
 }
 
 fn transparent_input(key: &str) -> InputImage {
@@ -62,7 +65,7 @@ fn all_skipped_images_currently_produce_an_empty_output() {
     )
     .expect("v0.2 returns an empty output after all inputs are skipped");
 
-    assert!(out.atlas.pages.is_empty());
+    assert!(out.atlas.pages().is_empty());
     assert!(out.pages.is_empty());
 }
 

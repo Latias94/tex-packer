@@ -174,7 +174,7 @@ pub fn render(
                     ui.painter().rect_stroke(
                         rect,
                         CornerRadius::ZERO,
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 255)),
+                        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0, 200, 255)),
                         StrokeKind::Outside,
                     );
                 }
@@ -209,7 +209,7 @@ pub fn render(
                         ui.painter().rect_stroke(
                             rect,
                             CornerRadius::ZERO,
-                            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 120, 0)),
+                            egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 120, 0)),
                             StrokeKind::Outside,
                         );
                         break;
@@ -279,7 +279,7 @@ pub fn render(
                     ui.painter().rect_stroke(
                         rect,
                         CornerRadius::ZERO,
-                        egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 255, 100)),
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(0, 255, 100)),
                         StrokeKind::Outside,
                     );
                     break;

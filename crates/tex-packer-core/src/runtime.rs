@@ -151,7 +151,7 @@ impl AtlasSession {
         let mut pages: Vec<Page<String>> = Vec::new();
         for p in &self.pages {
             let mut frames: Vec<Frame<String>> = Vec::new();
-            for (_k, (_slot, _rot, f)) in p.used.iter() {
+            for (_slot, _rot, f) in p.used.values() {
                 frames.push(f.clone());
             }
             pages.push(Page {

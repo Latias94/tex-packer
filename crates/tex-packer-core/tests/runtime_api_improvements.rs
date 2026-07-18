@@ -1,6 +1,70 @@
 use tex_packer_core::prelude::*;
 
 #[test]
+#[ignore = "U5: rejected oversized appends must not consume runtime page identifiers"]
+fn rejected_oversized_append_does_not_consume_page_id() {
+    let cfg = PackerConfig::builder().with_max_dimensions(64, 64).build();
+    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+
+    assert!(sess.append("too_large".into(), 128, 128).is_err());
+    assert_eq!(sess.stats().num_pages, 0);
+    assert_eq!(sess.texture_count(), 0);
+
+    let (page_id, _) = sess
+        .append("valid".into(), 16, 16)
+        .expect("a valid append should still use the first page");
+    assert_eq!(page_id, 0);
+}
+
+#[test]
+#[ignore = "U5: rejected zero-sized appends must not consume runtime page identifiers"]
+fn rejected_zero_sized_append_does_not_consume_page_id() {
+    let cfg = PackerConfig::builder().with_max_dimensions(64, 64).build();
+    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+
+    assert!(sess.append("zero_width".into(), 0, 16).is_err());
+    assert_eq!(sess.stats().num_pages, 0);
+    assert_eq!(sess.texture_count(), 0);
+
+    let (page_id, _) = sess
+        .append("valid".into(), 16, 16)
+        .expect("a valid append should still use the first page");
+    assert_eq!(page_id, 0);
+}
+
+#[test]
+#[ignore = "U5: duplicate runtime keys must not leak allocations or change statistics"]
+fn duplicate_key_append_preserves_placement_and_stats() {
+    let cfg = PackerConfig::builder().with_max_dimensions(64, 64).build();
+    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+
+    let (original_page, original_frame) = sess
+        .append("duplicate".into(), 16, 16)
+        .expect("initial append");
+    let stats_before = sess.stats();
+
+    let _duplicate_result = sess.append("duplicate".into(), 16, 16);
+    assert_runtime_stats_eq(&sess.stats(), &stats_before);
+
+    let (current_page, current_frame) = sess
+        .get_frame("duplicate")
+        .expect("the original key must remain present");
+    assert_eq!(current_page, original_page);
+    assert_eq!(current_frame.frame, original_frame.frame);
+    assert_eq!(current_frame.rotated, original_frame.rotated);
+}
+
+fn assert_runtime_stats_eq(actual: &RuntimeStats, expected: &RuntimeStats) {
+    assert_eq!(actual.num_pages, expected.num_pages);
+    assert_eq!(actual.num_textures, expected.num_textures);
+    assert_eq!(actual.total_page_area, expected.total_page_area);
+    assert_eq!(actual.total_used_area, expected.total_used_area);
+    assert_eq!(actual.total_free_area, expected.total_free_area);
+    assert_eq!(actual.occupancy, expected.occupancy);
+    assert_eq!(actual.num_free_rects, expected.num_free_rects);
+}
+
+#[test]
 fn test_get_frame() {
     let cfg = PackerConfig::builder()
         .with_max_dimensions(256, 256)

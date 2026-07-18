@@ -273,11 +273,29 @@ fn test_zero_sized_texture_layout() {
         ("zero_height".to_string(), 32, 0),
     ];
 
-    // Should handle gracefully (likely skip zero-sized textures)
-    let result = pack_layout(inputs, cfg);
-    // Depending on implementation, this might succeed or fail
-    // The important thing is it doesn't panic
-    let _ = result;
+    let atlas = pack_layout(inputs, cfg).expect("v0.2 accepts zero-sized layout items");
+    assert_eq!(
+        atlas
+            .pages
+            .iter()
+            .map(|page| page.frames.len())
+            .sum::<usize>(),
+        3
+    );
+}
+
+#[test]
+#[ignore = "U4: reject zero-sized layout items with key-aware errors"]
+fn zero_sized_layout_item_is_rejected_with_key_context() {
+    let result = pack_layout(
+        vec![("zero_width".to_string(), 0, 32)],
+        PackerConfig::default(),
+    );
+
+    match result {
+        Ok(_) => panic!("zero-sized layout item should be rejected"),
+        Err(err) => assert!(err.to_string().contains("zero_width")),
+    }
 }
 
 /// Test many small textures

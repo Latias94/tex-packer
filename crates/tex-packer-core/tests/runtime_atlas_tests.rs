@@ -2,6 +2,31 @@ use image::{Rgba, RgbaImage};
 use tex_packer_core::prelude::*;
 
 #[test]
+#[ignore = "U5: failed image appends must not retain geometry or pixel pages"]
+fn rejected_image_append_leaves_runtime_atlas_empty() {
+    let cfg = PackerConfig::builder().with_max_dimensions(64, 64).build();
+    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let invalid_image = RgbaImage::new(0, 16);
+
+    assert!(
+        atlas
+            .append_with_image("zero_width".into(), &invalid_image)
+            .is_err()
+    );
+    assert_eq!(atlas.texture_count(), 0);
+    assert_eq!(atlas.stats().num_pages, 0);
+    assert!(atlas.snapshot_atlas().pages.is_empty());
+    assert_eq!(atlas.num_pages(), 0);
+
+    let valid_image = RgbaImage::from_pixel(16, 16, Rgba([255, 0, 0, 255]));
+    let (page_id, _, _) = atlas
+        .append_with_image("valid".into(), &valid_image)
+        .expect("a valid append should still use the first page");
+    assert_eq!(page_id, 0);
+    assert_eq!(atlas.num_pages(), 1);
+}
+
+#[test]
 fn test_runtime_atlas_basic() {
     let cfg = PackerConfig::builder()
         .with_max_dimensions(256, 256)

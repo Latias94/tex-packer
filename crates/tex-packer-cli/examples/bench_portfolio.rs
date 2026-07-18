@@ -10,15 +10,17 @@ use tex_packer_core::config::{
     GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, OfflineConfig, PackingStrategy,
     PageConfig, SkylineHeuristic,
 };
-use tex_packer_core::{InputImage, pack_images};
+use tex_packer_core::offline::{InputImage, OfflinePacker};
 
 #[derive(Debug, Serialize)]
 struct BenchResult {
     name: String,
     pages: usize,
-    total_area: u64,
-    used_area: u64,
-    occupancy: f64,
+    page_area: u128,
+    content_area: u128,
+    allocation_area: u128,
+    content_occupancy: f64,
+    allocation_occupancy: f64,
     ms: u128,
 }
 
@@ -108,29 +110,27 @@ fn main() -> anyhow::Result<()> {
                 image: i.image.clone(),
             })
             .collect();
-        match pack_images(cloned, cfg) {
+        match OfflinePacker::new(cfg).pack_images(cloned) {
             Ok(out) => {
-                let (used, total) = compute_stats(&out);
-                let occ = if total > 0 {
-                    used as f64 / total as f64
-                } else {
-                    0.0
-                };
+                let stats = out.stats();
                 let dur = start.elapsed();
                 let ms = dur.as_millis();
                 println!(
-                    "{:<20} pages={} occ={:.2}% time={}",
+                    "{:<20} pages={} content={:.2}% allocation={:.2}% time={}",
                     name,
-                    out.pages.len(),
-                    occ * 100.0,
+                    out.atlas().pages().len(),
+                    stats.content_occupancy * 100.0,
+                    stats.allocation_occupancy * 100.0,
                     fmt_dur(dur)
                 );
                 results.push(BenchResult {
                     name,
-                    pages: out.pages.len(),
-                    total_area: total,
-                    used_area: used,
-                    occupancy: occ,
+                    pages: out.atlas().pages().len(),
+                    page_area: stats.page_area,
+                    content_area: stats.content_area,
+                    allocation_area: stats.allocation_area,
+                    content_occupancy: stats.content_occupancy,
+                    allocation_occupancy: stats.allocation_occupancy,
                     ms,
                 });
             }
@@ -141,25 +141,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     results.sort_by(|a, b| match a.pages.cmp(&b.pages) {
-        std::cmp::Ordering::Equal => a.total_area.cmp(&b.total_area),
+        std::cmp::Ordering::Equal => a.page_area.cmp(&b.page_area),
         other => other,
     });
     let json = serde_json::to_string_pretty(&results)?;
     fs::write(out_dir.join("bench_portfolio.json"), json)?;
     println!("wrote {}", out_dir.join("bench_portfolio.json").display());
     Ok(())
-}
-
-fn compute_stats(out: &tex_packer_core::PackOutput) -> (u64, u64) {
-    let mut used: u64 = 0;
-    let mut total: u64 = 0;
-    for p in &out.atlas.pages {
-        total += (p.width as u64) * (p.height as u64);
-        for f in &p.frames {
-            used += (f.frame.w as u64) * (f.frame.h as u64);
-        }
-    }
-    (used, total)
 }
 
 fn collect_images(path: &Path) -> anyhow::Result<Vec<InputImage>> {

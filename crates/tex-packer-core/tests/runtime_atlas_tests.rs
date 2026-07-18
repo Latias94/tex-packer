@@ -1,6 +1,10 @@
 use image::{Rgba, RgbaImage};
-use tex_packer_core::PageId;
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{
+    GuillotineChoice, GuillotineSplit, PageConfig, PageConfigBuilder, RuntimeConfig,
+    RuntimeStrategy,
+};
+use tex_packer_core::model::PageId;
+use tex_packer_core::runtime::{RuntimeAtlas, UpdateRegion};
 
 fn guillotine_config(page: PageConfigBuilder) -> RuntimeConfig {
     RuntimeConfig::builder()

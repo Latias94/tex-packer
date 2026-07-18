@@ -1,6 +1,7 @@
 use image::{Rgba, RgbaImage};
-use tex_packer_core::prelude::*;
-use tex_packer_core::{OfflinePacker, TexPackerError, TransparentPolicy};
+use tex_packer_core::config::{OfflineConfig, PageConfig, TransparentPolicy};
+use tex_packer_core::error::TexPackerError;
+use tex_packer_core::offline::{InputImage, OfflinePacker};
 
 #[test]
 fn test_transparent_one_by_one() {
@@ -26,9 +27,9 @@ fn test_transparent_one_by_one() {
     let layout = packer
         .layout_images(vec![transparent_input("t.png")])
         .expect("layout");
-    assert_eq!(out.atlas, layout);
-    assert_eq!(out.atlas.pages().len(), 1);
-    let resolved = out.atlas.pages()[0]
+    assert_eq!(out.atlas(), &layout);
+    assert_eq!(out.atlas().pages().len(), 1);
+    let resolved = out.atlas().pages()[0]
         .resolved_frames()
         .next()
         .expect("transparent frame");
@@ -106,7 +107,7 @@ fn skip_policy_has_render_and_layout_parity_for_mixed_inputs() {
     let rendered = packer.pack_images(inputs()).expect("rendered pack");
     let layout = packer.layout_images(inputs()).expect("metadata-only pack");
 
-    assert_eq!(rendered.atlas, layout);
+    assert_eq!(rendered.atlas(), &layout);
     let frame = layout.pages()[0].frames().first().expect("visible frame");
     assert_eq!(frame.key(), "visible.png");
     assert_eq!(layout.stats().num_frames, 1);

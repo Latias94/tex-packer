@@ -107,62 +107,87 @@ fn render_selection_section(ui: &mut egui::Ui, state: &mut AppState) {
     egui::CollapsingHeader::new("Selection")
         .default_open(true)
         .show(ui, |ui| {
-            if let (Some(sel), Some(result)) = (&state.selected, &state.result) {
-                let sel_page = sel.page_index;
-                if let Some(page) = result.pages.get(sel_page) {
-                    if let Some(fr) = page.page.frames.iter().find(|f| f.key == sel.key) {
-                        let name = fr.key.clone();
-                        ui.horizontal(|ui| {
-                            ui.strong("Name:");
-                            ui.label(&name);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.strong("Page:");
-                            ui.label(format!("{}", sel_page + 1));
-                        });
-                        ui.separator();
-                        ui.label(format!(
-                            "Frame: x={} y={} w={} h={}",
-                            fr.frame.x, fr.frame.y, fr.frame.w, fr.frame.h
-                        ));
-                        ui.label(format!("Rotated: {} | Trimmed: {}", fr.rotated, fr.trimmed));
-                        ui.label(format!(
-                            "Source: x={} y={} w={} h={}",
-                            fr.source.x, fr.source.y, fr.source.w, fr.source.h
-                        ));
-                        ui.label(format!(
-                            "SourceSize: {}x{}",
-                            fr.source_size.0, fr.source_size.1
-                        ));
-                        ui.add_space(4.0);
-                        let excluded_now = state.excluded_keys.contains(&name);
-                        ui.horizontal(|ui| {
-                            if ui.button("Go to page").clicked() {
-                                state.selected_page = sel_page;
-                            }
-                            let btn = if excluded_now {
-                                egui::Button::new("Include")
-                            } else {
-                                egui::Button::new("Exclude")
-                            };
-                            if ui.add(btn).clicked() {
-                                if excluded_now {
-                                    state.excluded_keys.remove(&name);
-                                } else {
-                                    state.excluded_keys.insert(name.clone());
-                                }
-                                state.dirty_config = true;
-                            }
-                            if ui.button("Deselect").clicked() {
-                                state.selected = None;
-                            }
-                        });
-                    } else {
-                        ui.weak("Selected sprite not found on current result.");
+            let details = state.selected.and_then(|selection| {
+                let result = state.result.as_ref()?;
+                let resolved = selection.resolve(result.atlas())?;
+                Some((
+                    resolved.frame().key().to_owned(),
+                    selection.rendered_page_index(result),
+                    resolved.page_id(),
+                    resolved.region().content(),
+                    resolved.region().rotated(),
+                    resolved.frame().trimmed(),
+                    resolved.frame().source(),
+                    resolved.frame().source_size(),
+                ))
+            });
+
+            if let Some((
+                name,
+                rendered_page_index,
+                page_id,
+                content,
+                rotated,
+                trimmed,
+                source,
+                source_size,
+            )) = details
+            {
+                ui.horizontal(|ui| {
+                    ui.strong("Name:");
+                    ui.label(&name);
+                });
+                ui.horizontal(|ui| {
+                    ui.strong("Page:");
+                    ui.label(
+                        rendered_page_index
+                            .map(|index| (index + 1).to_string())
+                            .unwrap_or_else(|| page_id.to_string()),
+                    );
+                });
+                ui.separator();
+                ui.label(format!(
+                    "Frame: x={} y={} w={} h={}",
+                    content.x, content.y, content.w, content.h
+                ));
+                ui.label(format!("Rotated: {rotated} | Trimmed: {trimmed}"));
+                ui.label(format!(
+                    "Source: x={} y={} w={} h={}",
+                    source.x, source.y, source.w, source.h
+                ));
+                ui.label(format!("SourceSize: {}x{}", source_size.0, source_size.1));
+                ui.add_space(4.0);
+                let excluded_now = state.excluded_keys.contains(&name);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            rendered_page_index.is_some(),
+                            egui::Button::new("Go to page"),
+                        )
+                        .clicked()
+                        && let Some(page_index) = rendered_page_index
+                    {
+                        state.selected_page = page_index;
                     }
-                } else {
-                    ui.weak("Selected page index is out of range.");
-                }
+                    let btn = if excluded_now {
+                        egui::Button::new("Include")
+                    } else {
+                        egui::Button::new("Exclude")
+                    };
+                    if ui.add(btn).clicked() {
+                        if excluded_now {
+                            state.excluded_keys.remove(&name);
+                        } else {
+                            state.excluded_keys.insert(name.clone());
+                        }
+                        state.dirty_config = true;
+                    }
+                    if ui.button("Deselect").clicked() {
+                        state.selected = None;
+                    }
+                });
+            } else if state.selected.is_some() {
+                ui.weak("Selected sprite not found on current result.");
             } else {
                 ui.weak("No selection.");
             }

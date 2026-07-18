@@ -1,5 +1,26 @@
 use rand::{Rng, SeedableRng};
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{OfflineConfig, PageConfig};
+use tex_packer_core::model::{Atlas, Page};
+use tex_packer_core::offline::{LayoutItem, OfflinePacker};
+
+fn pack_layout<K: Into<String>>(
+    inputs: Vec<(K, u32, u32)>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<Atlas> {
+    OfflinePacker::new(config).pack_layout(
+        inputs
+            .into_iter()
+            .map(|(key, w, h)| LayoutItem {
+                key: key.into(),
+                w,
+                h,
+                source: None,
+                source_size: None,
+                trimmed: false,
+            })
+            .collect(),
+    )
+}
 
 fn is_pow2(v: u32) -> bool {
     v != 0 && (v & (v - 1)) == 0
@@ -32,7 +53,7 @@ fn pow2_resizes_page_dimensions() {
         .build()
         .expect("valid offline config");
     let inputs = vec![("a", 64, 32), ("b", 40, 80), ("c", 10, 10)];
-    let atlas = tex_packer_core::pack_layout(inputs, cfg.clone()).expect("pack");
+    let atlas = pack_layout(inputs, cfg.clone()).expect("pack");
     assert!(!atlas.pages().is_empty());
     let p = &atlas.pages()[0];
     let (min_w, min_h) = max_allocation_extents(p, cfg.page_config());
@@ -57,7 +78,7 @@ fn square_resizes_page_dimensions() {
         .build()
         .expect("valid offline config");
     let inputs = vec![("a", 120, 16), ("b", 40, 40)];
-    let atlas = tex_packer_core::pack_layout(inputs, cfg.clone()).expect("pack");
+    let atlas = pack_layout(inputs, cfg.clone()).expect("pack");
     let p = &atlas.pages()[0];
     assert_eq!(p.width(), p.height());
     let (min_w, min_h) = max_allocation_extents(p, cfg.page_config());
@@ -81,7 +102,7 @@ fn pow2_and_square_combo() {
         .build()
         .expect("valid offline config");
     let inputs = vec![("x", 123, 77), ("y", 200, 20)];
-    let atlas = tex_packer_core::pack_layout(inputs, cfg.clone()).expect("pack");
+    let atlas = pack_layout(inputs, cfg.clone()).expect("pack");
     let p = &atlas.pages()[0];
     assert_eq!(p.width(), p.height());
     assert!(is_pow2(p.width()));
@@ -102,7 +123,7 @@ fn force_max_dimensions_exact() {
         .build()
         .expect("valid offline config");
     let inputs = vec![("a", 10, 10)];
-    let atlas = tex_packer_core::pack_layout(inputs, cfg.clone()).expect("pack");
+    let atlas = pack_layout(inputs, cfg.clone()).expect("pack");
     let p = &atlas.pages()[0];
     assert_eq!(p.width(), 256);
     assert_eq!(p.height(), 192);
@@ -127,7 +148,7 @@ fn random_no_overlap_pow2_square() {
         let h = rng.gen_range(1..=64);
         items.push((format!("r{}", i), w, h));
     }
-    let atlas = tex_packer_core::pack_layout(items, cfg.clone()).expect("pack");
+    let atlas = pack_layout(items, cfg.clone()).expect("pack");
     for page in atlas.pages() {
         // no overlap between authoritative physical allocations
         for i in 0..page.regions().len() {

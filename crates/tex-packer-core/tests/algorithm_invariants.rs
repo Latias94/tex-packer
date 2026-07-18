@@ -1,7 +1,29 @@
 use std::collections::HashMap;
 
-use tex_packer_core::prelude::*;
-use tex_packer_core::{FrameId, PageId, RegionId};
+use tex_packer_core::config::{
+    AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, OfflineConfig, PackingStrategy,
+    PageConfig, RuntimeConfig, RuntimeStrategy, ShelfPolicy, SkylineHeuristic, SortOrder,
+};
+use tex_packer_core::model::{Atlas, FrameId, Page, PageId, Rect, RegionId};
+use tex_packer_core::offline::{LayoutItem, OfflinePacker};
+use tex_packer_core::runtime::AtlasSession;
+
+fn layout<K: Into<String>>(inputs: Vec<(K, u32, u32)>, config: OfflineConfig) -> Atlas {
+    let items = inputs
+        .into_iter()
+        .map(|(key, w, h)| LayoutItem {
+            key: key.into(),
+            w,
+            h,
+            source: None,
+            source_size: None,
+            trimmed: false,
+        })
+        .collect();
+    OfflinePacker::new(config)
+        .pack_layout(items)
+        .expect("layout must succeed")
+}
 
 #[derive(Clone)]
 struct OfflineCase {
@@ -29,10 +51,10 @@ fn offline_algorithms_satisfy_shared_frame_invariants() {
     ];
 
     for case in offline_cases() {
-        let atlas = pack_layout(items.clone(), case.cfg.clone()).expect(case.name);
+        let atlas = layout(items.clone(), case.cfg.clone());
         assert_atlas_invariants(case.name, &atlas, &expected_sizes(&items));
 
-        let repeated = pack_layout(items.clone(), case.cfg).expect(case.name);
+        let repeated = layout(items.clone(), case.cfg);
         assert_eq!(
             canonical_frames(&atlas),
             canonical_frames(&repeated),
@@ -59,7 +81,7 @@ fn offline_multi_page_invariants_are_page_local() {
         .expect("valid offline config");
     let items = vec![("a", 32, 32), ("b", 32, 32), ("c", 32, 32)];
 
-    let atlas = pack_layout(items.clone(), cfg).expect("multi-page skyline layout");
+    let atlas = layout(items.clone(), cfg);
 
     assert_eq!(atlas.pages().len(), 3);
     assert_atlas_invariants("offline multi-page", &atlas, &expected_sizes(&items));

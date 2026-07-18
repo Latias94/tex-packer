@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use crate::config::RuntimeConfig;
-pub use crate::config::{RuntimeStrategy, ShelfPolicy};
 use crate::error::{Result, TexPackerError};
 use crate::geometry::PlacementGeometry;
 use crate::model::{Atlas, Frame, FrameId, Meta, PageId, Rect, Region, RegionId};
 use crate::runtime_placement::{PreparedPageAppend, RuntimePage};
+
+pub use crate::runtime_atlas::{RuntimeAtlas, RuntimeImageUpdate, UpdateRegion};
 
 /// Owned logical and physical context returned by runtime placement operations.
 #[derive(Debug, Clone, PartialEq, Eq)]

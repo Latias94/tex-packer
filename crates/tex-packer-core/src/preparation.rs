@@ -164,7 +164,7 @@ fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], sort_order: SortOrder) {
     }
 }
 
-pub fn compute_trim_rect(rgba: &RgbaImage, threshold: u8) -> (Option<Rect>, Rect) {
+pub(crate) fn compute_trim_rect(rgba: &RgbaImage, threshold: u8) -> (Option<Rect>, Rect) {
     let (width, height) = rgba.dimensions();
     let mut x1 = 0;
     let mut y1 = 0;

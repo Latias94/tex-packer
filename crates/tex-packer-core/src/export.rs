@@ -2,6 +2,11 @@ use crate::export_manifest::ExportManifest;
 use crate::model::Atlas;
 use serde_json::{Value, json};
 
+pub use crate::export_manifest::{
+    TemplateContext, TemplatePage, TemplateSprite, to_template_context,
+};
+pub use crate::export_plist::{to_plist_hash, to_plist_hash_with_pages};
+
 /// Serialize the whole `Atlas` as a JSON object `{ pages, meta }` (array-of-pages style).
 /// Suitable for generic tooling and simple consumption.
 pub fn to_json_array(atlas: &Atlas) -> Value {

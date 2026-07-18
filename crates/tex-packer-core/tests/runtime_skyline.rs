@@ -1,5 +1,6 @@
-use tex_packer_core::PageId;
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{PageConfig, RuntimeConfig, RuntimeStrategy, SkylineHeuristic};
+use tex_packer_core::model::{PageId, Rect};
+use tex_packer_core::runtime::AtlasSession;
 
 fn runtime_config(page: PageConfig, heuristic: SkylineHeuristic) -> RuntimeConfig {
     RuntimeConfig::builder()

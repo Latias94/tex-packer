@@ -24,8 +24,8 @@ pub struct LayoutItem {
 
 /// Rendered pixels for one page in the accompanying atlas.
 pub struct RenderedPage {
-    pub page_id: PageId,
-    pub rgba: RgbaImage,
+    pub(crate) page_id: PageId,
+    pub(crate) rgba: RgbaImage,
 }
 
 impl RenderedPage {
@@ -44,11 +44,23 @@ impl RenderedPage {
 
 /// A validated atlas and its rendered page payloads.
 pub struct PackOutput {
-    pub atlas: Atlas,
-    pub pages: Vec<RenderedPage>,
+    pub(crate) atlas: Atlas,
+    pub(crate) pages: Vec<RenderedPage>,
 }
 
 impl PackOutput {
+    pub fn atlas(&self) -> &Atlas {
+        &self.atlas
+    }
+
+    pub fn pages(&self) -> &[RenderedPage] {
+        &self.pages
+    }
+
+    pub fn into_parts(self) -> (Atlas, Vec<RenderedPage>) {
+        (self.atlas, self.pages)
+    }
+
     pub fn stats(&self) -> PackStats {
         self.atlas.stats()
     }
@@ -83,6 +95,3 @@ impl OfflinePacker {
         crate::pipeline::pack_layout_impl(items, &self.config)
     }
 }
-
-/// Temporary v0.2 name retained until first-party callers migrate in U6.
-pub type OutputPage = RenderedPage;

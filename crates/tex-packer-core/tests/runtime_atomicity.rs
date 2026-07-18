@@ -1,10 +1,11 @@
 use image::{Rgba, RgbaImage};
-use tex_packer_core::runtime::RuntimeStats;
-use tex_packer_core::runtime_atlas::RuntimeAtlas;
-use tex_packer_core::{
-    Atlas, GuillotineChoice, GuillotineSplit, PageConfig, PageId, RuntimeConfig, RuntimeStrategy,
-    ShelfPolicy, SkylineHeuristic, TexPackerError,
+use tex_packer_core::config::{
+    GuillotineChoice, GuillotineSplit, PageConfig, RuntimeConfig, RuntimeStrategy, ShelfPolicy,
+    SkylineHeuristic,
 };
+use tex_packer_core::error::TexPackerError;
+use tex_packer_core::model::{Atlas, PageId};
+use tex_packer_core::runtime::{RuntimeAtlas, RuntimeStats};
 
 #[derive(Debug, PartialEq)]
 struct RuntimeState {

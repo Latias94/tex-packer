@@ -1,5 +1,9 @@
-use tex_packer_core::prelude::*;
-use tex_packer_core::{PageId, Region};
+use tex_packer_core::config::{
+    GuillotineChoice, GuillotineSplit, PageConfig, PageConfigBuilder, RuntimeConfig,
+    RuntimeStrategy,
+};
+use tex_packer_core::model::{PageId, Rect, Region};
+use tex_packer_core::runtime::AtlasSession;
 
 fn runtime_config(page: PageConfigBuilder, strategy: RuntimeStrategy) -> RuntimeConfig {
     RuntimeConfig::builder()

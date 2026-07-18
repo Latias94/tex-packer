@@ -1,6 +1,9 @@
-use tex_packer_core::PageId;
-use tex_packer_core::TexPackerError;
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{
+    GuillotineChoice, GuillotineSplit, PageConfig, RuntimeConfig, RuntimeStrategy, ShelfPolicy,
+};
+use tex_packer_core::error::TexPackerError;
+use tex_packer_core::model::PageId;
+use tex_packer_core::runtime::{AtlasSession, RuntimeStats};
 
 fn runtime_config(width: u32, height: u32, strategy: RuntimeStrategy) -> RuntimeConfig {
     let page = PageConfig::builder()

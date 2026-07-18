@@ -2,12 +2,70 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{ArgAction, Parser, Subcommand};
-use tex_packer_core::pack_images;
+use tex_packer_core::offline::OfflinePacker;
 
 mod config_adapter;
 mod input_loader;
 mod output_writer;
 mod pack_command;
+
+#[cfg(test)]
+mod test_support {
+    use std::ffi::OsString;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use clap::Parser;
+
+    use crate::PackArgs;
+
+    static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) struct TestDirectory {
+        path: PathBuf,
+    }
+
+    impl TestDirectory {
+        pub(crate) fn new(label: &str) -> std::io::Result<Self> {
+            let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "tex-packer-{label}-{}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir(&path)?;
+            Ok(Self { path })
+        }
+
+        pub(crate) fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            if let Ok(entries) = fs::read_dir(&self.path) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        let _ = fs::remove_file(path);
+                    }
+                }
+            }
+            let _ = fs::remove_dir(&self.path);
+        }
+    }
+
+    pub(crate) fn pack_args(out_dir: &Path) -> PackArgs {
+        PackArgs::try_parse_from([
+            OsString::from("tex-packer-test"),
+            OsString::from("unused-input"),
+            OsString::from("--out-dir"),
+            out_dir.as_os_str().to_owned(),
+        ])
+        .expect("test pack arguments must parse")
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -227,13 +285,14 @@ fn run_bench(b: &BenchArgs) -> anyhow::Result<()> {
     let inputs = input_loader::load_images_with_progress(&images, false)?;
     let cfg = config_adapter::build_bench_config(b)?;
     let start = Instant::now();
-    let out = pack_images(inputs, cfg)?;
+    let out = OfflinePacker::new(cfg).pack_images(inputs)?;
     let dur = start.elapsed();
     let stats = out.stats();
     println!(
-        "pages={} occupancy={:.2}% time={}",
-        out.pages.len(),
-        stats.occupancy * 100.0,
+        "pages={} content_occupancy={:.2}% allocation_occupancy={:.2}% time={}",
+        out.atlas().pages().len(),
+        stats.content_occupancy * 100.0,
+        stats.allocation_occupancy * 100.0,
         bench_fmt_dur(dur)
     );
     Ok(())

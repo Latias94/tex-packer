@@ -4,6 +4,7 @@ use crate::state::AppState;
 use eframe::egui;
 use eframe::egui::CornerRadius;
 use eframe::egui::epaint::StrokeKind;
+use tex_packer_core::model::Rect;
 
 pub fn render(
     ctx: &egui::Context,
@@ -15,12 +16,17 @@ pub fn render(
 
     if let Some(result) = &state.result {
         // Ensure textures vector size
-        if page_textures.len() != result.pages.len() {
+        if page_textures.len() != result.pages().len() {
             page_textures.clear();
-            page_textures.resize(result.pages.len(), None);
+            page_textures.resize(result.pages().len(), None);
         }
 
-        let pages = result.pages.len();
+        let pages = result.pages().len();
+        if pages == 0 {
+            ui.centered_and_justified(|ui| ui.weak("No rendered pages to preview."));
+            return;
+        }
+
         // Page selector
         ui.horizontal(|ui| {
             ui.label("Page:");
@@ -77,18 +83,31 @@ pub fn render(
         }
 
         // Build texture for current page if needed
-        let p = &result.pages[state.selected_page];
-        let (w, h) = (p.rgba.width() as usize, p.rgba.height() as usize);
+        let rendered_page = &result.pages()[state.selected_page];
+        let Some(page) = result.atlas().page(rendered_page.page_id()) else {
+            ui.colored_label(
+                egui::Color32::from_rgb(255, 120, 120),
+                format!(
+                    "Error: rendered page {} is missing from the atlas",
+                    rendered_page.page_id()
+                ),
+            );
+            return;
+        };
+        let rgba = rendered_page.rgba();
+        let (w, h) = (rgba.width() as usize, rgba.height() as usize);
         if page_textures[state.selected_page].is_none() {
-            let img = egui::ColorImage::from_rgba_unmultiplied([w, h], p.rgba.as_raw());
+            let img = egui::ColorImage::from_rgba_unmultiplied([w, h], rgba.as_raw());
             let opts = match state.pixel_filter {
                 crate::state::PixelFilter::Linear => egui::TextureOptions::LINEAR,
                 crate::state::PixelFilter::Nearest => egui::TextureOptions::NEAREST,
             };
-            let tex = ctx.load_texture(format!("page_tex_{}", state.selected_page), img, opts);
+            let tex = ctx.load_texture(format!("page_tex_{}", rendered_page.page_id()), img, opts);
             page_textures[state.selected_page] = Some(tex);
         }
-        let tex = page_textures[state.selected_page].as_ref().unwrap();
+        let Some(tex) = page_textures[state.selected_page].as_ref() else {
+            return;
+        };
 
         // Compute display size and rect (with optional panning/zoom)
         let avail = ui.available_size();
@@ -162,14 +181,11 @@ pub fn render(
 
         // Overlay: draw frame bounds & names
         let scale = disp.x / img_size.x.max(1.0);
-        let page = &p.page;
         let mut hovered: Option<(String, (u32, u32))> = None;
         if state.overlay_show_bounds || state.overlay_show_names {
-            for fr in &page.frames {
-                let min =
-                    desired.min + egui::vec2(fr.frame.x as f32 * scale, fr.frame.y as f32 * scale);
-                let max = min + egui::vec2(fr.frame.w as f32 * scale, fr.frame.h as f32 * scale);
-                let rect = egui::Rect::from_min_max(min, max);
+            for resolved in page.resolved_frames() {
+                let frame = resolved.frame();
+                let rect = display_rect(desired.min, scale, resolved.region().content());
                 if state.overlay_show_bounds {
                     ui.painter().rect_stroke(
                         rect,
@@ -180,9 +196,9 @@ pub fn render(
                 }
                 if state.overlay_show_names {
                     ui.painter().text(
-                        min + egui::vec2(2.0, 2.0),
+                        rect.min + egui::vec2(2.0, 2.0),
                         egui::Align2::LEFT_TOP,
-                        &fr.key,
+                        frame.key(),
                         egui::TextStyle::Small.resolve(ui.style()),
                         egui::Color32::from_rgb(255, 255, 0),
                     );
@@ -194,18 +210,14 @@ pub fn render(
             {
                 let local = mouse - desired.min;
                 let atlas = egui::vec2(local.x / scale, local.y / scale);
-                for fr in &page.frames {
-                    if atlas.x >= fr.frame.x as f32
-                        && atlas.y >= fr.frame.y as f32
-                        && atlas.x < (fr.frame.x + fr.frame.w) as f32
-                        && atlas.y < (fr.frame.y + fr.frame.h) as f32
-                    {
-                        hovered = Some((fr.key.clone(), (atlas.x as u32, atlas.y as u32)));
-                        let min = desired.min
-                            + egui::vec2(fr.frame.x as f32 * scale, fr.frame.y as f32 * scale);
-                        let max =
-                            min + egui::vec2(fr.frame.w as f32 * scale, fr.frame.h as f32 * scale);
-                        let rect = egui::Rect::from_min_max(min, max);
+                for resolved in page.resolved_frames() {
+                    let content = resolved.region().content();
+                    if contains_atlas_point(content, atlas) {
+                        hovered = Some((
+                            resolved.frame().key().to_owned(),
+                            (atlas.x as u32, atlas.y as u32),
+                        ));
+                        let rect = display_rect(desired.min, scale, content);
                         ui.painter().rect_stroke(
                             rect,
                             CornerRadius::ZERO,
@@ -251,15 +263,11 @@ pub fn render(
         {
             let local = mouse - desired.min;
             let atlas = egui::vec2(local.x / scale, local.y / scale);
-            for fr in &page.frames {
-                if atlas.x >= fr.frame.x as f32
-                    && atlas.y >= fr.frame.y as f32
-                    && atlas.x < (fr.frame.x + fr.frame.w) as f32
-                    && atlas.y < (fr.frame.y + fr.frame.h) as f32
-                {
+            for resolved in page.resolved_frames() {
+                if contains_atlas_point(resolved.region().content(), atlas) {
                     state.selected = Some(crate::state::SelectedSprite {
-                        key: fr.key.clone(),
-                        page_index: state.selected_page,
+                        page_id: resolved.page_id(),
+                        frame_id: resolved.frame().id(),
                     });
                     break;
                 }
@@ -267,15 +275,11 @@ pub fn render(
         }
 
         if let Some(sel) = &state.selected
-            && sel.page_index == state.selected_page
+            && sel.page_id == page.id()
         {
-            for fr in &page.frames {
-                if fr.key == sel.key {
-                    let min = desired.min
-                        + egui::vec2(fr.frame.x as f32 * scale, fr.frame.y as f32 * scale);
-                    let max =
-                        min + egui::vec2(fr.frame.w as f32 * scale, fr.frame.h as f32 * scale);
-                    let rect = egui::Rect::from_min_max(min, max);
+            for resolved in page.resolved_frames() {
+                if resolved.frame().id() == sel.frame_id {
+                    let rect = display_rect(desired.min, scale, resolved.region().content());
                     ui.painter().rect_stroke(
                         rect,
                         CornerRadius::ZERO,
@@ -291,6 +295,19 @@ pub fn render(
             ui.weak("No result to preview. Select inputs and click Pack.")
         });
     }
+}
+
+fn display_rect(origin: egui::Pos2, scale: f32, content: Rect) -> egui::Rect {
+    let min = origin + egui::vec2(content.x as f32 * scale, content.y as f32 * scale);
+    let size = egui::vec2(content.w as f32 * scale, content.h as f32 * scale);
+    egui::Rect::from_min_size(min, size)
+}
+
+fn contains_atlas_point(content: Rect, point: egui::Vec2) -> bool {
+    point.x >= content.x as f32
+        && point.y >= content.y as f32
+        && point.x < content.x.saturating_add(content.w) as f32
+        && point.y < content.y.saturating_add(content.h) as f32
 }
 
 fn draw_checker(p: &egui::Painter, rect: egui::Rect, size: f32, dark: bool) {

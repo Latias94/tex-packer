@@ -1,5 +1,8 @@
-use tex_packer_core::PageId;
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{
+    PageConfig, PageConfigBuilder, RuntimeConfig, RuntimeStrategy, ShelfPolicy,
+};
+use tex_packer_core::model::{Atlas, PageId};
+use tex_packer_core::runtime::AtlasSession;
 
 fn runtime_config(page: PageConfigBuilder, policy: ShelfPolicy) -> RuntimeConfig {
     RuntimeConfig::builder()

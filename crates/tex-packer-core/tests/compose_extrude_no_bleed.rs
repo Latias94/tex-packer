@@ -1,6 +1,6 @@
 use image::{DynamicImage, Rgba, RgbaImage};
 use tex_packer_core::config::{OfflineConfig, PackingStrategy, PageConfig, SkylineHeuristic};
-use tex_packer_core::{InputImage, pack_images};
+use tex_packer_core::offline::{InputImage, OfflinePacker};
 
 fn solid_image(w: u32, h: u32, rgba: [u8; 4]) -> DynamicImage {
     let mut img = RgbaImage::new(w, h);
@@ -44,13 +44,13 @@ fn extrude_does_not_bleed_across_neighbors() {
         .build()
         .expect("valid offline config");
 
-    let out = pack_images(inputs, cfg).expect("pack");
-    assert_eq!(out.pages.len(), 1);
-    let page = &out.pages[0];
-    let rgba = &page.rgba;
+    let out = OfflinePacker::new(cfg).pack_images(inputs).expect("pack");
+    assert_eq!(out.pages().len(), 1);
+    let page = &out.pages()[0];
+    let rgba = page.rgba();
     let atlas_page = out
-        .atlas
-        .page(page.page_id)
+        .atlas()
+        .page(page.page_id())
         .expect("rendered page must resolve in atlas");
 
     // Find frames

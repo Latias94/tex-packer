@@ -1,6 +1,10 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{
+    GuillotineChoice, GuillotineSplit, PageConfig, RuntimeConfig, RuntimeStrategy, ShelfPolicy,
+    SkylineHeuristic,
+};
+use tex_packer_core::runtime::AtlasSession;
 
 fn runtime_config(
     width: u32,

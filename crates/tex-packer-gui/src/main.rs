@@ -10,7 +10,7 @@ use crate::stats::PackStats as GuiPackStats;
 use eframe::{egui, egui::Context};
 use state::AppState;
 use std::time::{Duration, Instant};
-use tex_packer_core::{InputImage, PackOutput, pack_images};
+use tex_packer_core::offline::{InputImage, OfflinePacker, PackOutput};
 
 #[derive(Default)]
 struct GuiApp {
@@ -65,6 +65,7 @@ impl eframe::App for GuiApp {
                     if !self.cancel_requested {
                         self.state.result = Some(out);
                         self.state.stats = Some(stats);
+                        self.state.selected = None;
                         self.page_textures.clear();
                     }
                 }
@@ -147,7 +148,7 @@ impl GuiApp {
         self.cancel_requested = false;
         let handle = std::thread::spawn(move || {
             let start = std::time::Instant::now();
-            match pack_images(inputs, config) {
+            match OfflinePacker::new(config).pack_images(inputs) {
                 Ok(out) => {
                     let pack_time_ms = start.elapsed().as_millis() as u64;
                     let stats = GuiPackStats::from_output(&out, num_images, pack_time_ms);

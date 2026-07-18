@@ -1,8 +1,42 @@
 use image::{DynamicImage, Rgba, RgbaImage};
 use std::collections::HashMap;
-use tex_packer_core::TexPackerError;
-use tex_packer_core::prelude::*;
-use tex_packer_core::{PageId, RegionId};
+use tex_packer_core::config::{OfflineConfig, PageConfig, SortOrder};
+use tex_packer_core::error::TexPackerError;
+use tex_packer_core::model::{Atlas, PageId, Rect, RegionId};
+use tex_packer_core::offline::{InputImage, LayoutItem, OfflinePacker, PackOutput};
+
+fn pack_images(
+    inputs: Vec<InputImage>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<PackOutput> {
+    OfflinePacker::new(config).pack_images(inputs)
+}
+
+fn pack_layout<K: Into<String>>(
+    inputs: Vec<(K, u32, u32)>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<Atlas> {
+    OfflinePacker::new(config).pack_layout(
+        inputs
+            .into_iter()
+            .map(|(key, w, h)| LayoutItem {
+                key: key.into(),
+                w,
+                h,
+                source: None,
+                source_size: None,
+                trimmed: false,
+            })
+            .collect(),
+    )
+}
+
+fn pack_layout_items(
+    items: Vec<LayoutItem>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<Atlas> {
+    OfflinePacker::new(config).pack_layout(items)
+}
 
 #[test]
 fn decoded_render_and_layout_share_the_same_atlas() {
@@ -46,9 +80,9 @@ fn decoded_render_and_layout_share_the_same_atlas() {
     let rendered = packer.pack_images(inputs()).expect("rendered pack");
     let layout = packer.layout_images(inputs()).expect("metadata-only pack");
 
-    assert_eq!(rendered.atlas, layout);
-    assert_eq!(rendered.atlas.stats().num_frames, 2);
-    assert_eq!(rendered.atlas.stats().num_regions, 1);
+    assert_eq!(rendered.atlas(), &layout);
+    assert_eq!(rendered.atlas().stats().num_frames, 2);
+    assert_eq!(rendered.atlas().stats().num_regions, 1);
     assert_output_pages_match_atlas(&rendered);
 }
 
@@ -98,7 +132,7 @@ fn layout_and_images_have_same_geometry() {
     // Build small set with varied sizes
     let sizes = vec![("a", 40, 20), ("b", 16, 32), ("c", 10, 10), ("d", 8, 48)];
     // layout-only
-    let atlas_layout = tex_packer_core::pack_layout(
+    let atlas_layout = pack_layout(
         sizes.iter().map(|(k, w, h)| (*k, *w, *h)).collect(),
         cfg.clone(),
     )
@@ -113,10 +147,10 @@ fn layout_and_images_have_same_geometry() {
             image: img,
         });
     }
-    let out = tex_packer_core::pack_images(inputs, cfg).expect("images");
+    let out = pack_images(inputs, cfg).expect("images");
 
     assert_output_pages_match_atlas(&out);
-    assert_atlas_geometry_matches(&atlas_layout, &out.atlas);
+    assert_atlas_geometry_matches(&atlas_layout, out.atlas());
 }
 
 #[test]
@@ -135,9 +169,8 @@ fn layout_and_images_match_for_forced_rotation() {
         .build()
         .expect("valid offline config");
 
-    let atlas_layout =
-        tex_packer_core::pack_layout(vec![("rotated", 8, 14)], cfg.clone()).expect("layout");
-    let out = tex_packer_core::pack_images(
+    let atlas_layout = pack_layout(vec![("rotated", 8, 14)], cfg.clone()).expect("layout");
+    let out = pack_images(
         vec![InputImage {
             key: "rotated".to_string(),
             image: DynamicImage::ImageRgba8(RgbaImage::new(8, 14)),
@@ -147,9 +180,9 @@ fn layout_and_images_match_for_forced_rotation() {
     .expect("images");
 
     assert_output_pages_match_atlas(&out);
-    assert_atlas_geometry_matches(&atlas_layout, &out.atlas);
+    assert_atlas_geometry_matches(&atlas_layout, out.atlas());
 
-    let resolved = out.atlas.pages()[0]
+    let resolved = out.atlas().pages()[0]
         .resolved_frames()
         .next()
         .expect("rotated frame");
@@ -201,13 +234,13 @@ fn layout_items_and_trimmed_images_match_with_padding_extrude_and_page_sizing() 
         })
         .collect();
 
-    let atlas_layout = tex_packer_core::pack_layout_items(layout_items, cfg.clone())
-        .expect("layout items should pack");
-    let out = tex_packer_core::pack_images(image_inputs, cfg).expect("images should pack");
+    let atlas_layout =
+        pack_layout_items(layout_items, cfg.clone()).expect("layout items should pack");
+    let out = pack_images(image_inputs, cfg).expect("images should pack");
 
     assert_output_pages_match_atlas(&out);
-    assert_atlas_geometry_matches(&atlas_layout, &out.atlas);
-    for page in out.atlas.pages() {
+    assert_atlas_geometry_matches(&atlas_layout, out.atlas());
+    for page in out.atlas().pages() {
         assert_eq!(page.width(), page.height());
         assert!(is_pow2(page.width()));
         for frame in page.frames() {
@@ -233,12 +266,12 @@ fn layout_and_images_match_when_packing_spills_to_multiple_pages() {
         .expect("valid offline config");
     let sizes = [("a", 40, 40), ("b", 40, 40), ("c", 40, 40)];
 
-    let atlas_layout = tex_packer_core::pack_layout(
+    let atlas_layout = pack_layout(
         sizes.iter().map(|(key, w, h)| (*key, *w, *h)).collect(),
         cfg.clone(),
     )
     .expect("layout should pack");
-    let out = tex_packer_core::pack_images(
+    let out = pack_images(
         sizes
             .iter()
             .enumerate()
@@ -255,9 +288,9 @@ fn layout_and_images_match_when_packing_spills_to_multiple_pages() {
     )
     .expect("images should pack");
 
-    assert!(out.atlas.pages().len() > 1);
+    assert!(out.atlas().pages().len() > 1);
     assert_output_pages_match_atlas(&out);
-    assert_atlas_geometry_matches(&atlas_layout, &out.atlas);
+    assert_atlas_geometry_matches(&atlas_layout, out.atlas());
 }
 
 #[test]
@@ -274,8 +307,7 @@ fn layout_and_images_report_same_out_of_space_progress() {
         .build()
         .expect("valid offline config");
 
-    let pure_layout_err =
-        tex_packer_core::pack_layout(vec![("too_big", 64, 64)], cfg.clone()).unwrap_err();
+    let pure_layout_err = pack_layout(vec![("too_big", 64, 64)], cfg.clone()).unwrap_err();
     let packer = OfflinePacker::new(cfg);
     let image_input = || {
         vec![InputImage {
@@ -317,15 +349,15 @@ fn assert_atlas_geometry_matches(expected: &Atlas, actual: &Atlas) {
 }
 
 fn assert_output_pages_match_atlas(out: &PackOutput) {
-    assert_eq!(out.pages.len(), out.atlas.pages().len());
-    for (rendered, atlas_page) in out.pages.iter().zip(out.atlas.pages().iter()) {
-        assert_eq!(rendered.page_id, atlas_page.id());
+    assert_eq!(out.pages().len(), out.atlas().pages().len());
+    for (rendered, atlas_page) in out.pages().iter().zip(out.atlas().pages().iter()) {
+        assert_eq!(rendered.page_id(), atlas_page.id());
         assert_eq!(
-            out.atlas.page(rendered.page_id).map(|page| page.size()),
+            out.atlas().page(rendered.page_id()).map(|page| page.size()),
             Some(atlas_page.size())
         );
         assert_eq!(
-            rendered.rgba.dimensions(),
+            rendered.rgba().dimensions(),
             (atlas_page.width(), atlas_page.height())
         );
     }

@@ -1,9 +1,18 @@
 use image::{DynamicImage, Rgba, RgbaImage};
-use tex_packer_core::{
-    AutoMode, GuillotineChoice, GuillotineSplit, InputImage, MaxRectsHeuristic, OfflineConfig,
-    OfflineConfigBuilder, PackOutput, PackingStrategy, PageConfig, Rect, ResolvedFrame,
-    SkylineHeuristic, SortOrder, pack_images, to_json_hash,
+use tex_packer_core::config::{
+    AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, OfflineConfig,
+    OfflineConfigBuilder, PackingStrategy, PageConfig, SkylineHeuristic, SortOrder,
 };
+use tex_packer_core::export::to_json_hash;
+use tex_packer_core::model::{Rect, ResolvedFrame};
+use tex_packer_core::offline::{InputImage, OfflinePacker, PackOutput};
+
+fn pack_images(
+    inputs: Vec<InputImage>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<PackOutput> {
+    OfflinePacker::new(config).pack_images(inputs)
+}
 
 fn input(key: &str, image: RgbaImage) -> InputImage {
     InputImage {
@@ -52,7 +61,7 @@ fn config(width: u32, height: u32) -> OfflineConfig {
 
 fn resolved_frame<'a>(output: &'a PackOutput, key: &str) -> ResolvedFrame<'a> {
     output
-        .atlas
+        .atlas()
         .pages()
         .iter()
         .flat_map(|page| page.resolved_frames())
@@ -82,7 +91,7 @@ fn identical_images_share_region_and_keep_logical_keys() {
     assert_eq!(stats.num_aliases, 1);
     assert_eq!(stats.content_area, 12);
 
-    let exported = to_json_hash(&output.atlas);
+    let exported = to_json_hash(output.atlas());
     let frames = exported["frames"].as_object().expect("frame map");
     assert!(frames.contains_key("hero"));
     assert!(frames.contains_key("hero_copy"));
@@ -106,7 +115,7 @@ fn logical_frames_keep_prepared_order() {
     )
     .expect("pack frames in input order");
 
-    let keys = output.atlas.pages()[0]
+    let keys = output.atlas().pages()[0]
         .frames()
         .iter()
         .map(|frame| frame.key())
@@ -127,7 +136,7 @@ fn duplicate_keys_keep_distinct_logical_identities() {
     )
     .expect("pack duplicate keys");
 
-    let page = &output.atlas.pages()[0];
+    let page = &output.atlas().pages()[0];
     assert_eq!(page.frames().len(), 2);
     assert_eq!(page.frames()[0].key(), "duplicate");
     assert_eq!(page.frames()[1].key(), "duplicate");
@@ -150,25 +159,25 @@ fn duplicate_keys_with_distinct_pixels_render_by_frame_identity() {
     )
     .expect("pack duplicate keys with distinct pixels");
 
-    let page = &output.atlas.pages()[0];
+    let page = &output.atlas().pages()[0];
     let resolved = page.resolved_frames().collect::<Vec<_>>();
     assert_eq!(resolved.len(), 2);
     assert_ne!(resolved[0].frame().id(), resolved[1].frame().id());
     assert_ne!(resolved[0].region().id(), resolved[1].region().id());
 
     let rendered = output
-        .pages
+        .pages()
         .iter()
-        .find(|rendered| rendered.page_id == page.id())
+        .find(|rendered| rendered.page_id() == page.id())
         .expect("rendered page");
     let first = resolved[0].region().content();
     let second = resolved[1].region().content();
     assert_eq!(
-        rendered.rgba.get_pixel(first.x, first.y),
+        rendered.rgba().get_pixel(first.x, first.y),
         &Rgba([255, 0, 0, 255])
     );
     assert_eq!(
-        rendered.rgba.get_pixel(second.x, second.y),
+        rendered.rgba().get_pixel(second.x, second.y),
         &Rgba([0, 0, 255, 255])
     );
 }
@@ -247,7 +256,7 @@ fn duplicate_region_on_later_page_is_placed_once_without_panicking() {
     )
     .expect("pack duplicate on later page");
 
-    assert_eq!(output.pages.len(), 2);
+    assert_eq!(output.pages().len(), 2);
     let first = resolved_frame(&output, "copy_a");
     let second = resolved_frame(&output, "copy_b");
     assert_eq!(first.page_id(), second.page_id());
@@ -260,13 +269,13 @@ fn duplicate_region_on_later_page_is_placed_once_without_panicking() {
     assert!(stats.content_occupancy <= 1.0);
 
     let page = output
-        .pages
+        .pages()
         .iter()
-        .find(|page| page.page_id == first.page_id())
+        .find(|page| page.page_id() == first.page_id())
         .expect("rendered page for alias");
     let content = first.region().content();
     assert_eq!(
-        page.rgba.get_pixel(content.x, content.y),
+        page.rgba().get_pixel(content.x, content.y),
         &Rgba([0, 0, 255, 255])
     );
 }
@@ -299,11 +308,11 @@ fn shared_region_respects_rotation_padding_and_extrusion() {
     );
     assert_eq!(output.stats().content_area, 8);
 
-    let page = &output.pages[0];
-    assert_eq!((page.rgba.width(), page.rgba.height()), (8, 10));
+    let page = &output.pages()[0];
+    assert_eq!(page.rgba().dimensions(), (8, 10));
     let content = original.region().content();
     assert_eq!(
-        page.rgba.get_pixel(content.x - 1, content.y),
+        page.rgba().get_pixel(content.x - 1, content.y),
         &Rgba([90, 120, 150, 255])
     );
 }

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use globset::{Glob, GlobSetBuilder};
 use image::{DynamicImage, ImageReader};
-use tex_packer_core::InputImage;
+use tex_packer_core::offline::InputImage;
 use tracing::error;
 use walkdir::WalkDir;
 

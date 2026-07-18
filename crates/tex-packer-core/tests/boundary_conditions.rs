@@ -2,8 +2,29 @@ use image::{DynamicImage, RgbaImage};
 use tex_packer_core::config::{
     MaxRectsHeuristic, OfflineConfig, PackingStrategy, PageConfig, SkylineHeuristic,
 };
-use tex_packer_core::error::TexPackerError;
-use tex_packer_core::{InputImage, pack_images, pack_layout};
+use tex_packer_core::error::{Result, TexPackerError};
+use tex_packer_core::model::Atlas;
+use tex_packer_core::offline::{InputImage, LayoutItem, OfflinePacker, PackOutput};
+
+fn render(inputs: Vec<InputImage>, config: OfflineConfig) -> Result<PackOutput> {
+    OfflinePacker::new(config).pack_images(inputs)
+}
+
+fn layout<K: Into<String>>(inputs: Vec<(K, u32, u32)>, config: OfflineConfig) -> Result<Atlas> {
+    OfflinePacker::new(config).pack_layout(
+        inputs
+            .into_iter()
+            .map(|(key, w, h)| LayoutItem {
+                key: key.into(),
+                w,
+                h,
+                source: None,
+                source_size: None,
+                trimmed: false,
+            })
+            .collect(),
+    )
+}
 
 /// Test zero-sized atlas dimensions
 #[test]
@@ -69,7 +90,7 @@ fn test_empty_input_pack_images() {
     let cfg = OfflineConfig::default();
     let inputs: Vec<InputImage> = vec![];
 
-    let result = pack_images(inputs, cfg);
+    let result = render(inputs, cfg);
     assert!(result.is_err());
     match result {
         Err(TexPackerError::Empty) => {}
@@ -82,7 +103,7 @@ fn test_empty_input_pack_layout() {
     let cfg = OfflineConfig::default();
     let inputs: Vec<(String, u32, u32)> = vec![];
 
-    let result = pack_layout(inputs, cfg);
+    let result = layout(inputs, cfg);
     assert!(result.is_err());
     match result {
         Err(TexPackerError::Empty) => {}
@@ -102,7 +123,7 @@ fn test_texture_too_large_width() {
         image: img,
     }];
 
-    let result = pack_images(inputs, cfg);
+    let result = render(inputs, cfg);
     assert!(result.is_err());
     // Should fail to pack
 }
@@ -118,7 +139,7 @@ fn test_texture_too_large_height() {
         image: img,
     }];
 
-    let result = pack_images(inputs, cfg);
+    let result = render(inputs, cfg);
     assert!(result.is_err());
 }
 
@@ -145,11 +166,11 @@ fn test_single_pixel_texture() {
         image: img,
     }];
 
-    let result = pack_images(inputs, cfg);
+    let result = render(inputs, cfg);
     assert!(result.is_ok());
     let output = result.unwrap();
-    assert_eq!(output.pages.len(), 1);
-    assert_eq!(output.atlas.pages()[0].frames().len(), 1);
+    assert_eq!(output.pages().len(), 1);
+    assert_eq!(output.atlas().pages()[0].frames().len(), 1);
 }
 
 /// Test very large atlas dimensions (stress test)
@@ -188,7 +209,7 @@ fn test_all_algorithms_with_valid_config() {
             image: img,
         }];
 
-        let result = pack_images(inputs, cfg);
+        let result = render(inputs, cfg);
         assert!(result.is_ok(), "Strategy {strategy:?} should work");
     }
 }
@@ -217,12 +238,12 @@ fn test_zero_sized_texture_layout_fails_domain_validation() {
         ("zero_height".to_string(), 32, 0),
     ];
 
-    assert!(pack_layout(inputs, cfg).is_err());
+    assert!(layout(inputs, cfg).is_err());
 }
 
 #[test]
 fn zero_sized_layout_item_is_rejected_with_key_context() {
-    let result = pack_layout(
+    let result = layout(
         vec![("zero_width".to_string(), 0, 32)],
         OfflineConfig::default(),
     );
@@ -239,12 +260,10 @@ fn zero_sized_layout_item_is_rejected_with_key_context() {
 
 #[test]
 fn zero_sized_decoded_image_is_rejected_with_key_context() {
-    let result = tex_packer_core::OfflinePacker::new(OfflineConfig::default()).pack_images(vec![
-        InputImage {
-            key: "zero_height".into(),
-            image: DynamicImage::ImageRgba8(RgbaImage::new(32, 0)),
-        },
-    ]);
+    let result = OfflinePacker::new(OfflineConfig::default()).pack_images(vec![InputImage {
+        key: "zero_height".into(),
+        image: DynamicImage::ImageRgba8(RgbaImage::new(32, 0)),
+    }]);
 
     match result {
         Err(TexPackerError::InvalidItemDimensions { key, width, height }) => {
@@ -270,10 +289,10 @@ fn test_many_small_textures() {
         });
     }
 
-    let result = pack_images(inputs, cfg);
+    let result = render(inputs, cfg);
     assert!(result.is_ok());
     let output = result.unwrap();
-    assert!(!output.atlas.pages().is_empty());
+    assert!(!output.atlas().pages().is_empty());
 }
 
 #[test]
@@ -287,7 +306,7 @@ fn test_large_layout_dimensions_do_not_overflow_algorithm_scores() {
         },
     );
 
-    let atlas = pack_layout(vec![("large", 65_000, 65_000)], cfg)
+    let atlas = layout(vec![("large", 65_000, 65_000)], cfg)
         .expect("large layout-only rectangle should not overflow score calculations");
     assert_eq!(atlas.pages().len(), 1);
     let resolved = atlas.pages()[0]

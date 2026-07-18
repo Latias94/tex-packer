@@ -1,5 +1,8 @@
 use serde_json::{Value, json};
-use tex_packer_core::{Atlas, AtlasDocument};
+use tex_packer_core::export::{
+    to_json_array, to_json_hash, to_plist_hash, to_plist_hash_with_pages, to_template_context,
+};
+use tex_packer_core::model::{Atlas, AtlasDocument};
 
 fn representative_atlas() -> Atlas {
     let document: AtlasDocument = serde_json::from_value(json!({
@@ -155,7 +158,7 @@ fn plist_frame_dict<'a>(plist: &'a str, escaped_key: &str) -> &'a str {
 fn json_array_preserves_page_and_logical_frame_order() {
     let atlas = representative_atlas();
 
-    let actual = tex_packer_core::to_json_array(&atlas);
+    let actual = to_json_array(&atlas);
 
     assert_eq!(
         actual,
@@ -210,7 +213,7 @@ fn json_array_preserves_page_and_logical_frame_order() {
 fn json_hash_preserves_alias_geometry_and_page_metadata() {
     let atlas = representative_atlas();
 
-    let actual = tex_packer_core::to_json_hash(&atlas);
+    let actual = to_json_hash(&atlas);
 
     assert_eq!(
         actual,
@@ -264,7 +267,7 @@ fn json_hash_preserves_alias_geometry_and_page_metadata() {
 fn duplicate_keys_are_preserved_in_arrays_and_later_values_win_in_hashes() {
     let atlas = atlas_with_duplicate_keys();
 
-    let array = tex_packer_core::to_json_array(&atlas);
+    let array = to_json_array(&atlas);
     let duplicate_frames = array["pages"][0]["frames"]
         .as_array()
         .expect("array export should contain logical frames");
@@ -273,7 +276,7 @@ fn duplicate_keys_are_preserved_in_arrays_and_later_values_win_in_hashes() {
     assert_eq!(duplicate_frames[0]["frame"]["x"], 1);
     assert_eq!(duplicate_frames[1]["frame"]["x"], 20);
 
-    let hash = tex_packer_core::to_json_hash(&atlas);
+    let hash = to_json_hash(&atlas);
     assert_eq!(hash["frames"]["hero"]["frame"]["x"], 20);
     assert_eq!(
         hash["frames"]["hero"]["sourceSize"],
@@ -295,7 +298,7 @@ fn template_context_preserves_page_sprite_and_meta_shapes() {
     let atlas = representative_atlas();
     let page_names = vec!["atlas_3.png".to_owned(), "atlas_9.png".to_owned()];
 
-    let context = tex_packer_core::to_template_context(&atlas, &page_names);
+    let context = to_template_context(&atlas, &page_names);
     let actual = serde_json::to_value(context).expect("template context should serialize");
 
     assert_eq!(
@@ -355,7 +358,7 @@ fn plist_preserves_frame_and_custom_page_name_order() {
     let atlas = representative_atlas();
     let page_names = vec!["atlas&3.png".to_owned(), "atlas_9.png".to_owned()];
 
-    let plist = tex_packer_core::to_plist_hash_with_pages(&atlas, &page_names);
+    let plist = to_plist_hash_with_pages(&atlas, &page_names);
 
     assert_fragments_in_order(
         &plist,
@@ -413,7 +416,7 @@ fn plist_preserves_frame_and_custom_page_name_order() {
 fn plist_without_page_names_preserves_multi_page_size_order() {
     let atlas = representative_atlas();
 
-    let plist = tex_packer_core::to_plist_hash(&atlas);
+    let plist = to_plist_hash(&atlas);
 
     assert_fragments_in_order(
         &plist,

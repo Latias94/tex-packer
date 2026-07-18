@@ -1,5 +1,33 @@
 use image::{DynamicImage, Rgba, RgbaImage};
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{OfflineConfig, PackingStrategy, PageConfig, SkylineHeuristic};
+use tex_packer_core::model::{Atlas, Meta};
+use tex_packer_core::offline::{InputImage, LayoutItem, OfflinePacker, PackOutput};
+
+fn pack_images(
+    inputs: Vec<InputImage>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<PackOutput> {
+    OfflinePacker::new(config).pack_images(inputs)
+}
+
+fn pack_layout<K: Into<String>>(
+    inputs: Vec<(K, u32, u32)>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<Atlas> {
+    OfflinePacker::new(config).pack_layout(
+        inputs
+            .into_iter()
+            .map(|(key, w, h)| LayoutItem {
+                key: key.into(),
+                w,
+                h,
+                source: None,
+                source_size: None,
+                trimmed: false,
+            })
+            .collect(),
+    )
+}
 
 #[test]
 fn test_pack_stats_basic() {
@@ -216,7 +244,7 @@ fn test_pack_stats_multiple_pages() {
 
     // Total area should be sum of all pages
     let expected_total: u64 = result
-        .atlas
+        .atlas()
         .pages()
         .iter()
         .map(|p| u64::from(p.width()) * u64::from(p.height()))
@@ -224,8 +252,20 @@ fn test_pack_stats_multiple_pages() {
     assert_eq!(stats.page_area, u128::from(expected_total));
 
     // Max page dimensions should be <= configured max
-    assert!(result.atlas.pages().iter().all(|page| page.width() <= 128));
-    assert!(result.atlas.pages().iter().all(|page| page.height() <= 128));
+    assert!(
+        result
+            .atlas()
+            .pages()
+            .iter()
+            .all(|page| page.width() <= 128)
+    );
+    assert!(
+        result
+            .atlas()
+            .pages()
+            .iter()
+            .all(|page| page.height() <= 128)
+    );
 }
 
 #[test]

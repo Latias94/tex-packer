@@ -1,4 +1,6 @@
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{OfflineConfig, PageConfig};
+use tex_packer_core::model::Rect;
+use tex_packer_core::offline::{InputImage, LayoutItem, OfflinePacker};
 
 #[test]
 fn force_max_ignores_pow2_and_square() {
@@ -13,8 +15,15 @@ fn force_max_ignores_pow2_and_square() {
         .square(true)
         .build()
         .expect("valid offline config");
-    let inputs = vec![("a", 10, 10)];
-    let atlas = tex_packer_core::pack_layout(inputs, cfg).expect("pack");
+    let inputs = vec![LayoutItem {
+        key: "a".into(),
+        w: 10,
+        h: 10,
+        source: None,
+        source_size: None,
+        trimmed: false,
+    }];
+    let atlas = OfflinePacker::new(cfg).pack_layout(inputs).expect("pack");
     let p = &atlas.pages()[0];
     assert_eq!(p.width(), 300);
     assert_eq!(p.height(), 180);
@@ -42,9 +51,11 @@ fn border_padding_is_respected_in_pack_images() {
             image: img,
         });
     }
-    let out = tex_packer_core::pack_images(inputs, cfg.clone()).expect("pack");
+    let out = OfflinePacker::new(cfg.clone())
+        .pack_images(inputs)
+        .expect("pack");
     let page_config = cfg.page_config();
-    for page in out.atlas.pages() {
+    for page in out.atlas().pages() {
         // Logical border rectangle
         let border_rect = Rect::new(
             page_config.border_padding(),

@@ -5,6 +5,7 @@ use crate::config::{
 use crate::error::{Result, TexPackerError};
 use crate::geometry::{ContentSize, PhysicalPlacement, bottom_ex_u32, right_ex_u32};
 use crate::model::{Atlas, Frame, FrameId, Meta, Page, PageId, Rect, Region, RegionId};
+use crate::offline::{InputImage, LayoutItem, PackOutput, RenderedPage};
 use crate::packer::PlacementEngine;
 use crate::packing_plan::PackingPlan;
 use crate::preparation::{PreparedItem, prepare_images, prepare_layout_items};
@@ -13,23 +14,10 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tracing::instrument;
 
-pub use crate::offline::{InputImage, LayoutItem, OutputPage, PackOutput, RenderedPage};
-pub use crate::preparation::compute_trim_rect;
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[instrument(skip_all)]
-/// Packs `inputs` into atlas pages using configuration `cfg` and returns metadata and RGBA pages.
-///
-/// Notes:
-/// - Sorting is stable for deterministic results.
-/// - When the strategy is `Auto`, a small portfolio is tried and the best result is chosen (pages first, then total area).
-/// - The time budget can limit Auto evaluation; parallel execution is used when enabled and available.
-pub fn pack_images(inputs: Vec<InputImage>, config: OfflineConfig) -> Result<PackOutput> {
-    crate::offline::OfflinePacker::new(config).pack_images(inputs)
-}
-
 pub(crate) fn pack_images_impl(
     inputs: Vec<InputImage>,
     config: &OfflineConfig,
@@ -625,33 +613,6 @@ fn auto_candidates(mode: AutoMode, enable_mr_ref: bool) -> Vec<PackingStrategy> 
             },
         ],
     }
-}
-
-// ---------------- Layout-only API ----------------
-
-/// Packs sizes into pages without compositing pixel data.
-/// Inputs are (key, width, height). Returns an Atlas with pages and frames; no RGBA pages.
-pub fn pack_layout<K: Into<String>>(
-    inputs: Vec<(K, u32, u32)>,
-    config: OfflineConfig,
-) -> Result<Atlas> {
-    let items = inputs
-        .into_iter()
-        .map(|(key, w, h)| LayoutItem {
-            key: key.into(),
-            w,
-            h,
-            source: None,
-            source_size: None,
-            trimmed: false,
-        })
-        .collect();
-    crate::offline::OfflinePacker::new(config).pack_layout(items)
-}
-
-/// Packs layout-only items (with optional source/source_size metadata) into pages.
-pub fn pack_layout_items(items: Vec<LayoutItem>, config: OfflineConfig) -> Result<Atlas> {
-    crate::offline::OfflinePacker::new(config).pack_layout(items)
 }
 
 pub(crate) fn pack_layout_impl(items: Vec<LayoutItem>, config: &OfflineConfig) -> Result<Atlas> {

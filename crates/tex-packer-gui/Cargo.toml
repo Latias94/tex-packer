@@ -1,6 +1,6 @@
 [package]
 name = "tex-packer-gui"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 readme = "README.md"
 description = "Desktop GUI for tex-packer built with egui/eframe (wgpu): load images, configure, preview, and export texture atlases."
@@ -21,7 +21,7 @@ exclude = [
 maintenance = { status = "actively-developed" }
 
 [dependencies]
-tex-packer-core = { path = "../tex-packer-core", version = "0.2.0" }
+tex-packer-core = { path = "../tex-packer-core", version = "0.3.0" }
 image = { version = "0.25", default-features = true, features = ["png", "jpeg", "gif", "bmp", "tiff"] }
 serde_json = "1"
 rfd = "0.15"

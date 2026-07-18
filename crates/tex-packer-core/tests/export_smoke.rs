@@ -1,3 +1,4 @@
+use plist::Value as PlistValue;
 use serde_json::{Value, json};
 use tex_packer_core::export::{
     to_json_array, to_json_hash, to_plist_hash, to_plist_hash_with_pages, to_template_context,
@@ -428,4 +429,26 @@ fn plist_without_page_names_preserves_multi_page_size_order() {
         ],
     );
     assert!(!plist.contains("textureFileName"));
+}
+
+#[test]
+fn plist_duplicate_keys_are_lossy_after_dictionary_parsing() {
+    let atlas = atlas_with_duplicate_keys();
+    let plist = to_plist_hash(&atlas);
+    let logical_frames = atlas
+        .pages()
+        .iter()
+        .map(|page| page.frames().len())
+        .sum::<usize>();
+
+    assert_eq!(plist.matches("<key>hero</key>").count(), 2);
+
+    let parsed = PlistValue::from_reader_xml(plist.as_bytes()).expect("parse generated plist");
+    let frames = parsed
+        .as_dictionary()
+        .and_then(|root| root.get("frames"))
+        .and_then(PlistValue::as_dictionary)
+        .expect("parsed frames dictionary");
+    assert_eq!(frames.len(), logical_frames - 1);
+    assert!(frames.contains_key("hero"));
 }

@@ -4,6 +4,7 @@ use crate::model::Atlas;
 /// Build a basic Apple plist (XML) with frames in a dict keyed by name.
 /// Multi-page atlases include page id and size fields for each frame.
 /// Use `to_plist_hash_with_pages` to inject texture filenames into meta.
+/// Duplicate frame keys are not lossless after parsing into a plist dictionary.
 pub fn to_plist_hash(atlas: &Atlas) -> String {
     let manifest = ExportManifest::from_atlas(atlas);
     render_plist_hash(&manifest, None)

@@ -25,8 +25,20 @@ pub(crate) struct RuntimePage {
     allocator: RuntimeAllocator,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct RuntimePageMetrics {
+    pub(crate) num_frames: usize,
+    pub(crate) num_regions: usize,
+    pub(crate) num_rotated_regions: usize,
+    pub(crate) page_area: u128,
+    pub(crate) content_area: u128,
+    pub(crate) allocation_area: u128,
+    pub(crate) allocator_free_area: u128,
+    pub(crate) num_free_rects: usize,
+}
+
 pub(crate) struct PreparedPageAppend {
-    allocator: RuntimeAllocator,
+    allocation: Rect,
     placement: RuntimePlacement,
     next_region_id: u32,
     next_frame_id: u32,
@@ -38,7 +50,6 @@ impl PreparedPageAppend {
     }
 }
 
-#[derive(Clone)]
 enum RuntimeAllocator {
     Guillotine(RuntimeGuillotine),
     Shelf(RuntimeShelfPlacement),
@@ -171,21 +182,22 @@ impl RuntimePage {
         let page_bounds = Rect::new(0, 0, self.width, self.height);
         if !physical.allocation.contains(&physical.content)
             || !page_bounds.contains(&physical.allocation)
-            || self
-                .regions
-                .values()
-                .any(|region| region.allocation().intersects(&physical.allocation))
         {
             return Err(TexPackerError::InvariantViolation {
                 context: format!("runtime page {}", self.id),
                 reason: format!("placement for key '{key}' violates page geometry invariants"),
             });
         }
+        debug_assert!(
+            !self
+                .regions
+                .values()
+                .any(|region| region.allocation().intersects(&physical.allocation)),
+            "runtime allocator must propose a non-overlapping allocation"
+        );
 
-        let mut allocator = self.allocator.clone();
-        allocator.place(&physical.allocation);
         Ok(Some(PreparedPageAppend {
-            allocator,
+            allocation: physical.allocation,
             placement: RuntimePlacement::new(self.id, frame, region),
             next_region_id,
             next_frame_id,
@@ -194,12 +206,12 @@ impl RuntimePage {
 
     pub(crate) fn commit_append(&mut self, prepared: PreparedPageAppend) -> RuntimePlacement {
         let PreparedPageAppend {
-            allocator,
+            allocation,
             placement,
             next_region_id,
             next_frame_id,
         } = prepared;
-        self.allocator = allocator;
+        self.allocator.place(&allocation);
         self.next_region_id = next_region_id;
         self.next_frame_id = next_frame_id;
         let replaced_region = self
@@ -215,11 +227,8 @@ impl RuntimePage {
         placement
     }
 
-    pub(crate) fn evict(&mut self, frame_id: FrameId, region_id: RegionId) -> Option<Rect> {
-        let frame = self.frames.get(&frame_id)?;
-        if frame.region_id() != region_id {
-            return None;
-        }
+    pub(crate) fn evict(&mut self, frame_id: FrameId) -> Option<Rect> {
+        let region_id = self.frames.get(&frame_id)?.region_id();
         let allocation = self.regions.get(&region_id)?.allocation();
         self.frames.remove(&frame_id);
         self.regions.remove(&region_id);
@@ -227,15 +236,9 @@ impl RuntimePage {
         Some(allocation)
     }
 
-    pub(crate) fn placement(
-        &self,
-        frame_id: FrameId,
-        region_id: RegionId,
-    ) -> Option<RuntimePlacement> {
+    pub(crate) fn placement(&self, frame_id: FrameId) -> Option<RuntimePlacement> {
         let frame = self.frames.get(&frame_id)?;
-        if frame.region_id() != region_id {
-            return None;
-        }
+        let region_id = frame.region_id();
         let region = self.regions.get(&region_id)?;
         Some(RuntimePlacement::new(
             self.id,
@@ -248,33 +251,28 @@ impl RuntimePage {
         self.frames.len()
     }
 
-    pub(crate) fn region_count(&self) -> usize {
-        self.regions.len()
-    }
-
-    pub(crate) fn content_area(&self) -> u128 {
-        self.regions
-            .values()
-            .map(|region| region.content().area())
-            .sum()
-    }
-
-    pub(crate) fn allocation_area(&self) -> u128 {
-        self.regions
-            .values()
-            .map(|region| region.allocation().area())
-            .sum()
-    }
-
-    pub(crate) fn rotated_regions(&self) -> usize {
-        self.regions
-            .values()
-            .filter(|region| region.rotated())
-            .count()
-    }
-
-    pub(crate) fn free_area_and_rects(&self) -> (u64, usize) {
-        self.allocator.free_area_and_rects()
+    pub(crate) fn metrics(&self) -> RuntimePageMetrics {
+        let (content_area, allocation_area, num_rotated_regions) = self.regions.values().fold(
+            (0u128, 0u128, 0usize),
+            |(content_area, allocation_area, rotated), region| {
+                (
+                    content_area + region.content().area(),
+                    allocation_area + region.allocation().area(),
+                    rotated + usize::from(region.rotated()),
+                )
+            },
+        );
+        let (allocator_free_area, num_free_rects) = self.allocator.free_area_and_rects();
+        RuntimePageMetrics {
+            num_frames: self.frames.len(),
+            num_regions: self.regions.len(),
+            num_rotated_regions,
+            page_area: u128::from(self.width) * u128::from(self.height),
+            content_area,
+            allocation_area,
+            allocator_free_area: u128::from(allocator_free_area),
+            num_free_rects,
+        }
     }
 
     pub(crate) fn snapshot(&self) -> Result<Page> {

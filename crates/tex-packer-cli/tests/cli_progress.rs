@@ -60,6 +60,16 @@ fn run_dry_pack(fixture: &TestDirectory, args: &[&str]) -> Output {
         .expect("run tex-packer CLI")
 }
 
+fn run_bench(fixture: &TestDirectory) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_tex-packer"))
+        .arg("bench")
+        .arg(&fixture.input)
+        .arg("--algorithm")
+        .arg("skyline")
+        .output()
+        .expect("run tex-packer bench command")
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
@@ -119,4 +129,20 @@ fn redirected_progress_is_hidden_for_normal_and_parallel_packs() {
         assert_success(&output);
         assert_no_progress_control_sequences(&output);
     }
+}
+
+#[test]
+fn bench_reports_the_documented_metric_fields() {
+    let fixture = TestDirectory::new("bench-output");
+    let output = run_bench(&fixture);
+    assert_success(&output);
+    assert_no_progress_control_sequences(&output);
+
+    let stdout = String::from_utf8(output.stdout).expect("bench output is UTF-8");
+    let fields = stdout.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(fields.len(), 4, "unexpected bench output: {stdout:?}");
+    assert!(fields[0].starts_with("pages="), "{stdout:?}");
+    assert!(fields[1].starts_with("content_occupancy="), "{stdout:?}");
+    assert!(fields[2].starts_with("allocation_occupancy="), "{stdout:?}");
+    assert!(fields[3].starts_with("time="), "{stdout:?}");
 }

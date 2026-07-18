@@ -87,6 +87,37 @@ fn native_v2_round_trip_rebuilds_indexes_and_preserves_order() {
 }
 
 #[test]
+fn programmatic_atlas_expands_metadata_bounds_to_remain_reversible() {
+    let page = Page::try_new(
+        PageId::new(1),
+        2048,
+        16,
+        vec![Region::new(
+            RegionId::new(1),
+            Rect::new(0, 0, 1, 1),
+            Rect::new(0, 0, 1, 1),
+            false,
+        )],
+        vec![Frame::new(
+            FrameId::new(1),
+            "large-page".to_owned(),
+            RegionId::new(1),
+            false,
+            Rect::new(0, 0, 1, 1),
+            (1, 1),
+        )],
+    )
+    .expect("valid large page");
+    let atlas = Atlas::try_new(vec![page], Meta::default()).expect("valid large atlas");
+
+    assert_eq!(atlas.meta().max_dimensions(), (2048, 1024));
+    let restored = AtlasDocument::from_atlas(&atlas)
+        .try_into_atlas()
+        .expect("normalized metadata must round-trip");
+    assert_eq!(restored, atlas);
+}
+
+#[test]
 fn wire_shape_contains_relationships_but_never_runtime_indexes() {
     let value = valid_document_value();
     let root = value.as_object().expect("document object");
@@ -181,6 +212,37 @@ fn document_loading_validates_metadata_before_accepting_the_atlas() {
         impossible_reservation,
         "require at least 17x17 usable pixels",
     );
+}
+
+#[test]
+fn document_loading_rejects_metadata_that_contradicts_page_geometry() {
+    let mut undersized_maximum = valid_document_value();
+    undersized_maximum["meta"]["max_dimensions"] = json!([15, 16]);
+    assert_invalid_document(
+        undersized_maximum,
+        "dimensions 16x16 exceed metadata maximum 15x16",
+    );
+
+    let mut forbidden_rotation = valid_document_value();
+    forbidden_rotation["meta"]["allow_rotation"] = json!(false);
+    forbidden_rotation["pages"][0]["regions"][0]["rotated"] = json!(true);
+    forbidden_rotation["pages"][0]["frames"][0]["source"] = json!({"x": 0, "y": 0, "w": 2, "h": 3});
+    forbidden_rotation["pages"][0]["frames"][0]["source_size"] = json!([2, 3]);
+    forbidden_rotation["pages"][0]["frames"][1]["source"] = json!({"x": 4, "y": 5, "w": 2, "h": 3});
+    assert_invalid_document(forbidden_rotation, "rotation is disabled by atlas metadata");
+
+    let mut non_power_of_two = valid_document_value();
+    non_power_of_two["meta"]["power_of_two"] = json!(true);
+    non_power_of_two["pages"][0]["width"] = json!(15);
+    assert_invalid_document(
+        non_power_of_two,
+        "dimensions 15x16 are not both powers of two",
+    );
+
+    let mut non_square = valid_document_value();
+    non_square["meta"]["square"] = json!(true);
+    non_square["pages"][0]["height"] = json!(15);
+    assert_invalid_document(non_square, "dimensions 16x15 are not square");
 }
 
 #[test]

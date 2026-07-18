@@ -2,7 +2,6 @@ use crate::config::ShelfPolicy;
 use crate::geometry::{bottom_ex_u32, right_ex_u32, span_end_ex};
 use crate::model::Rect;
 
-#[derive(Clone)]
 pub(super) struct RuntimeShelfPlacement {
     border: Rect,
     policy: ShelfPolicy,
@@ -10,7 +9,7 @@ pub(super) struct RuntimeShelfPlacement {
     next_y: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct RuntimeShelf {
     y: u32,
     h: u32,

@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use crate::config::RuntimeConfig;
 use crate::error::{Result, TexPackerError};
 use crate::geometry::PlacementGeometry;
-use crate::model::{Atlas, Frame, FrameId, Meta, PageId, Rect, Region, RegionId};
+use crate::model::{
+    Atlas, Frame, FrameId, Meta, PageId, Rect, Region, RegionId, area_percentage, area_ratio,
+};
 use crate::runtime_placement::{PreparedPageAppend, RuntimePage};
 
 pub use crate::runtime_atlas::{RuntimeAtlas, RuntimeImageUpdate, UpdateRegion};
@@ -103,12 +105,10 @@ impl RuntimeStats {
 
     /// Returns the percentage of page area not occupied by physical allocations.
     pub fn waste_percentage(&self) -> f64 {
-        if self.page_area == 0 {
-            0.0
-        } else {
-            self.page_area.saturating_sub(self.allocation_area) as f64 / self.page_area as f64
-                * 100.0
-        }
+        area_percentage(
+            self.page_area.saturating_sub(self.allocation_area),
+            self.page_area,
+        )
     }
 }
 
@@ -124,7 +124,6 @@ pub struct AtlasSession {
 struct RuntimeHandle {
     page_id: PageId,
     frame_id: FrameId,
-    region_id: RegionId,
 }
 
 enum PreparedAppendTarget {
@@ -271,7 +270,6 @@ impl AtlasSession {
         let handle = RuntimeHandle {
             page_id: placement.page_id(),
             frame_id: placement.frame_id(),
-            region_id: placement.region_id(),
         };
         let replaced_handle = self.key_index.insert(prepared.key, handle);
         debug_assert!(
@@ -307,9 +305,7 @@ impl AtlasSession {
     pub fn get_frame(&self, key: &str) -> Option<RuntimePlacement> {
         let handle = self.key_index.get(key)?;
         let page_slot = *self.page_slots.get(&handle.page_id)?;
-        self.pages
-            .get(page_slot)?
-            .placement(handle.frame_id, handle.region_id)
+        self.pages.get(page_slot)?.placement(handle.frame_id)
     }
 
     /// Finds the physical allocation reserved for a key.
@@ -342,26 +338,25 @@ impl AtlasSession {
 
     pub fn stats(&self) -> RuntimeStats {
         let num_pages = self.pages.len();
-        let num_frames = self.texture_count();
-        let num_regions = self.pages.iter().map(RuntimePage::region_count).sum();
-        let page_area = self
-            .pages
-            .iter()
-            .map(|page| {
-                let (width, height) = page.size();
-                u128::from(width) * u128::from(height)
-            })
-            .sum();
-        let content_area = self.pages.iter().map(RuntimePage::content_area).sum();
-        let allocation_area = self.pages.iter().map(RuntimePage::allocation_area).sum();
-        let num_rotated_regions = self.pages.iter().map(RuntimePage::rotated_regions).sum();
-        let (allocator_free_area, num_free_rects) = self
-            .pages
-            .iter()
-            .map(RuntimePage::free_area_and_rects)
-            .fold((0u128, 0usize), |(area, count), (page_area, page_count)| {
-                (area + u128::from(page_area), count + page_count)
-            });
+        let mut num_frames = 0usize;
+        let mut num_regions = 0usize;
+        let mut num_rotated_regions = 0usize;
+        let mut page_area = 0u128;
+        let mut content_area = 0u128;
+        let mut allocation_area = 0u128;
+        let mut allocator_free_area = 0u128;
+        let mut num_free_rects = 0usize;
+        for page in &self.pages {
+            let metrics = page.metrics();
+            num_frames += metrics.num_frames;
+            num_regions += metrics.num_regions;
+            num_rotated_regions += metrics.num_rotated_regions;
+            page_area += metrics.page_area;
+            content_area += metrics.content_area;
+            allocation_area += metrics.allocation_area;
+            allocator_free_area += metrics.allocator_free_area;
+            num_free_rects += metrics.num_free_rects;
+        }
 
         RuntimeStats {
             num_pages,
@@ -373,8 +368,8 @@ impl AtlasSession {
             page_area,
             content_area,
             allocation_area,
-            content_occupancy: occupancy(content_area, page_area),
-            allocation_occupancy: occupancy(allocation_area, page_area),
+            content_occupancy: area_ratio(content_area, page_area),
+            allocation_occupancy: area_ratio(allocation_area, page_area),
             allocator_free_area,
             num_free_rects,
         }
@@ -387,19 +382,11 @@ impl AtlasSession {
         let Some(page) = self.pages.get_mut(page_slot) else {
             return false;
         };
-        if page.evict(handle.frame_id, handle.region_id).is_none() {
+        if page.evict(handle.frame_id).is_none() {
             return false;
         }
         let removed = self.key_index.remove(key);
         debug_assert_eq!(removed, Some(handle));
         true
-    }
-}
-
-fn occupancy(area: u128, page_area: u128) -> f64 {
-    if page_area == 0 {
-        0.0
-    } else {
-        area as f64 / page_area as f64
     }
 }

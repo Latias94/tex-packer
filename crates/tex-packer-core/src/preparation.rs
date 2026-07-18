@@ -66,26 +66,13 @@ fn prepare_image(
     preparation: ImagePreparation,
 ) -> Option<PreparedItem<RgbaImage>> {
     let (width, height) = rgba.dimensions();
-    let (rect, trimmed, source) = if let Some(trim) = preparation.trim {
-        let (trim_rect_opt, source_rect) = compute_trim_rect(&rgba, trim.threshold);
-        match trim_rect_opt {
-            Some(rect) => (Rect::new(0, 0, rect.w, rect.h), true, source_rect),
-            None => match trim.transparent_policy {
-                TransparentPolicy::Keep => (
-                    Rect::new(0, 0, width, height),
-                    false,
-                    Rect::new(0, 0, width, height),
-                ),
-                TransparentPolicy::OneByOne => (Rect::new(0, 0, 1, 1), true, Rect::new(0, 0, 1, 1)),
-                TransparentPolicy::Skip => return None,
-            },
-        }
-    } else {
-        (
+    let (rect, trimmed, source) = match preparation.trim {
+        Some(trim) => prepare_trimmed_geometry(&rgba, trim)?,
+        None => (
             Rect::new(0, 0, width, height),
             false,
             Rect::new(0, 0, width, height),
-        )
+        ),
     };
 
     Some(PreparedItem {
@@ -96,6 +83,23 @@ fn prepare_image(
         source,
         orig_size: (width, height),
     })
+}
+
+fn prepare_trimmed_geometry(rgba: &RgbaImage, trim: TrimOptions) -> Option<(Rect, bool, Rect)> {
+    let (trim_rect, source) = compute_trim_rect(rgba, trim.threshold);
+    match (trim_rect, trim.transparent_policy) {
+        (Some(rect), _) => Some((Rect::new(0, 0, rect.w, rect.h), true, source)),
+        (None, TransparentPolicy::Keep) => {
+            let (width, height) = rgba.dimensions();
+            let full = Rect::new(0, 0, width, height);
+            Some((full, false, full))
+        }
+        (None, TransparentPolicy::OneByOne) => {
+            let pixel = Rect::new(0, 0, 1, 1);
+            Some((pixel, true, pixel))
+        }
+        (None, TransparentPolicy::Skip) => None,
+    }
 }
 
 pub(crate) fn prepare_layout_items(

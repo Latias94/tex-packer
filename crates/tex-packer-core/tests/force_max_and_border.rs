@@ -1,5 +1,5 @@
 use tex_packer_core::config::{OfflineConfig, PageConfig};
-use tex_packer_core::model::Rect;
+use tex_packer_core::model::{AtlasDocument, Rect};
 use tex_packer_core::offline::{InputImage, LayoutItem, OfflinePacker};
 
 #[test]
@@ -27,6 +27,11 @@ fn force_max_ignores_pow2_and_square() {
     let p = &atlas.pages()[0];
     assert_eq!(p.width(), 300);
     assert_eq!(p.height(), 180);
+    assert!(!atlas.meta().power_of_two());
+    assert!(!atlas.meta().square());
+    AtlasDocument::from_atlas(&atlas)
+        .try_into_atlas()
+        .expect("force-max output metadata must round-trip");
 }
 
 #[test]

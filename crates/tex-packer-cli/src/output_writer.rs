@@ -121,7 +121,7 @@ pub(crate) fn write_pack_metadata(cli: &PackArgs, output: &PackOutput) -> anyhow
             );
         }
         "plist" => {
-            let page_names = output_page_names(output, &cli.name);
+            let page_names = atlas_page_names(output.atlas(), &cli.name);
             let plist = to_plist_hash_with_pages(output.atlas(), &page_names);
             let plist_path = cli.out_dir.join(format!("{}.plist", cli.name));
             fs::write(&plist_path, plist)
@@ -215,7 +215,7 @@ fn write_template(cli: &PackArgs, output: &PackOutput) -> anyhow::Result<()> {
 }
 
 pub(crate) fn render_template(cli: &PackArgs, output: &PackOutput) -> anyhow::Result<String> {
-    let page_names = output_page_names(output, &cli.name);
+    let page_names = atlas_page_names(output.atlas(), &cli.name);
     let context = to_template_context(output.atlas(), &page_names);
     let template_owned_from_file = if let Some(path) = &cli.template {
         Some(fs::read_to_string(path)?)
@@ -259,10 +259,6 @@ fn template_output_path(cli: &PackArgs) -> PathBuf {
     } else {
         cli.out_dir.join(format!("{}.template.json", cli.name))
     }
-}
-
-fn output_page_names(output: &PackOutput, atlas_name: &str) -> Vec<String> {
-    atlas_page_names(output.atlas(), atlas_name)
 }
 
 fn atlas_page_names(atlas: &Atlas, atlas_name: &str) -> Vec<String> {

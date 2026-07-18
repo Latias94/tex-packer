@@ -77,7 +77,7 @@ mod test_support {
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    /// Show progress bars (disable with --no-progress or --quiet)
+    /// Show progress bars (disable with --progress false or --quiet)
     #[arg(long, default_value_t = true, action=ArgAction::Set, global=true, help_heading = "Logging/UX")]
     progress: bool,
     /// Increase verbosity (-v, -vv)
@@ -102,7 +102,7 @@ enum Commands {
     Template(PackArgs),
     /// Layout-only export (no PNGs): compute placements and export JSON/Plist
     Layout(PackArgs),
-    /// Simple timing bench (packs once, prints time + occupancy)
+    /// Time one pack and print content/allocation occupancy
     Bench(BenchArgs),
 }
 
@@ -304,16 +304,6 @@ fn bench_fmt_dur(d: Duration) -> String {
         format!("{:.1}ms", ms)
     } else {
         format!("{}us", d.as_micros())
-    }
-}
-
-#[allow(dead_code)]
-fn fmt_dur(d: Duration) -> String {
-    let ms = d.as_secs_f64() * 1000.0;
-    if ms >= 1.0 {
-        format!("{:.1}ms", ms)
-    } else {
-        format!("{}µs", d.as_micros())
     }
 }
 

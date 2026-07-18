@@ -2,7 +2,6 @@ use crate::config::{GuillotineChoice, GuillotineSplit};
 use crate::free_space::{guillotine_score, guillotine_split, merge_adjacent, prune_contained};
 use crate::model::Rect;
 
-#[derive(Clone)]
 pub(super) struct RuntimeGuillotine {
     free: Vec<Rect>,
     choice: GuillotineChoice,

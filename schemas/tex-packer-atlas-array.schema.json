@@ -54,6 +54,14 @@
         "h": { "type": "integer", "minimum": 0 }
       }
     },
+    "vec2": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
     "meta": {
       "type": "object",
       "required": ["schema_version", "app", "version", "format", "scale", "power_of_two", "square", "max_dim", "padding", "extrude", "allow_rotation", "trim_mode"],

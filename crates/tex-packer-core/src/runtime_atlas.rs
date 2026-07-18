@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use image::{Rgba, RgbaImage};
 
 use crate::config::RuntimeConfig;
@@ -70,6 +72,7 @@ enum PreparedPixels {
 pub struct RuntimeAtlas {
     session: AtlasSession,
     pages: Vec<RuntimeImagePage>,
+    page_slots: HashMap<PageId, usize>,
     background_color: Rgba<u8>,
     outlines: bool,
 }
@@ -79,6 +82,7 @@ impl RuntimeAtlas {
         Self {
             session: AtlasSession::new(cfg),
             pages: Vec::new(),
+            page_slots: HashMap::new(),
             background_color: Rgba([0, 0, 0, 0]),
             outlines: false,
         }
@@ -152,17 +156,13 @@ impl RuntimeAtlas {
     }
 
     pub fn get_page_image(&self, page_id: PageId) -> Option<&RgbaImage> {
-        self.pages
-            .iter()
-            .find(|page| page.id == page_id)
-            .map(|page| &page.image)
+        let page_slot = *self.page_slots.get(&page_id)?;
+        self.pages.get(page_slot).map(|page| &page.image)
     }
 
     pub fn get_page_image_mut(&mut self, page_id: PageId) -> Option<&mut RgbaImage> {
-        self.pages
-            .iter_mut()
-            .find(|page| page.id == page_id)
-            .map(|page| &mut page.image)
+        let page_slot = *self.page_slots.get(&page_id)?;
+        self.pages.get_mut(page_slot).map(|page| &mut page.image)
     }
 
     pub fn num_pages(&self) -> usize {
@@ -204,12 +204,14 @@ impl RuntimeAtlas {
         let page_size = prepared_append.page_size();
         let dirty_region = validate_blit(placement, image, page_size, extrusion)?;
 
-        if let Some((page_index, page)) = self
-            .pages
-            .iter()
-            .enumerate()
-            .find(|(_, page)| page.id == page_id)
-        {
+        if let Some(&page_index) = self.page_slots.get(&page_id) {
+            let page =
+                self.pages
+                    .get(page_index)
+                    .ok_or_else(|| TexPackerError::InvariantViolation {
+                        context: format!("runtime image page {page_id}"),
+                        reason: format!("page index references missing slot {page_index}"),
+                    })?;
             if page.image.dimensions() != page_size {
                 return Err(TexPackerError::InvariantViolation {
                     context: format!("runtime image page {page_id}"),
@@ -280,7 +282,13 @@ impl RuntimeAtlas {
                     page.put_pixel(region.x + x, region.y + y, *pixel);
                 }
             }
-            PreparedPixels::New(page) => self.pages.push(page),
+            PreparedPixels::New(page) => {
+                let page_id = page.id;
+                let page_slot = self.pages.len();
+                self.pages.push(page);
+                let replaced = self.page_slots.insert(page_id, page_slot);
+                debug_assert!(replaced.is_none(), "new pixel page identity must be unique");
+            }
         }
     }
 
@@ -295,18 +303,14 @@ impl RuntimeAtlas {
     }
 
     fn clear_region(&mut self, region: UpdateRegion) {
-        let Some(page) = self
-            .pages
-            .iter_mut()
-            .find(|page| page.id == region.page_id)
-            .map(|page| &mut page.image)
-        else {
+        let background_color = self.background_color;
+        let Some(page) = self.get_page_image_mut(region.page_id) else {
             return;
         };
 
         for y in region.y..region.y.saturating_add(region.height).min(page.height()) {
             for x in region.x..region.x.saturating_add(region.width).min(page.width()) {
-                page.put_pixel(x, y, self.background_color);
+                page.put_pixel(x, y, background_color);
             }
         }
     }

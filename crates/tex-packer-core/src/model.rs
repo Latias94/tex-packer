@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -263,21 +263,11 @@ impl Page {
             }
         }
 
-        for first in 0..regions.len() {
-            for second in (first + 1)..regions.len() {
-                if regions[first]
-                    .allocation
-                    .intersects(&regions[second].allocation)
-                {
-                    return Err(invariant(
-                        page_context.clone(),
-                        format!(
-                            "allocations for regions {} and {} overlap",
-                            regions[first].id, regions[second].id
-                        ),
-                    ));
-                }
-            }
+        if let Some((first, second)) = overlapping_allocations(&regions) {
+            return Err(invariant(
+                page_context.clone(),
+                format!("allocations for regions {first} and {second} overlap"),
+            ));
         }
 
         let mut frame_by_id = HashMap::with_capacity(frames.len());
@@ -410,6 +400,44 @@ impl Page {
     }
 }
 
+fn overlapping_allocations(regions: &[Region]) -> Option<(RegionId, RegionId)> {
+    let mut events = Vec::with_capacity(regions.len().saturating_mul(2));
+    for (slot, region) in regions.iter().enumerate() {
+        events.push((region.allocation.x as u64, true, slot));
+        events.push((region.allocation.right_exclusive(), false, slot));
+    }
+    events.sort_unstable_by_key(|&(x, starts, slot)| (x, starts, slot));
+
+    let mut active_by_y: BTreeMap<u32, usize> = BTreeMap::new();
+    for (_, starts, slot) in events {
+        let allocation = regions[slot].allocation;
+        if !starts {
+            active_by_y.remove(&allocation.y);
+            continue;
+        }
+
+        // Until the first invalid start event, active y intervals are disjoint,
+        // so only the immediate neighbors can overlap the new interval.
+        if let Some((_, &other_slot)) = active_by_y.range(..=allocation.y).next_back()
+            && allocation.intersects(&regions[other_slot].allocation)
+        {
+            return Some((regions[other_slot].id, regions[slot].id));
+        }
+        if let Some((_, &other_slot)) = active_by_y.range(allocation.y..).next()
+            && allocation.intersects(&regions[other_slot].allocation)
+        {
+            return Some((regions[other_slot].id, regions[slot].id));
+        }
+
+        let replaced = active_by_y.insert(allocation.y, slot);
+        debug_assert!(
+            replaced.is_none(),
+            "non-overlapping active allocations must have distinct y origins"
+        );
+    }
+    None
+}
+
 /// Borrowed logical frame together with its authoritative physical region.
 #[derive(Debug, Clone, Copy)]
 pub struct ResolvedFrame<'a> {
@@ -471,14 +499,17 @@ impl Meta {
         self.scale
     }
 
+    /// Returns whether power-of-two output sizing was applied to every page.
     pub const fn power_of_two(&self) -> bool {
         self.power_of_two
     }
 
+    /// Returns whether square output sizing was applied to every page.
     pub const fn square(&self) -> bool {
         self.square
     }
 
+    /// Returns an upper bound for every output page dimension.
     pub const fn max_dimensions(&self) -> (u32, u32) {
         self.max_dimensions
     }
@@ -607,6 +638,57 @@ impl Meta {
         }
         Ok(())
     }
+
+    fn expand_max_dimensions_to_cover(&mut self, pages: &[Page]) {
+        for page in pages {
+            self.max_dimensions.0 = self.max_dimensions.0.max(page.width);
+            self.max_dimensions.1 = self.max_dimensions.1.max(page.height);
+        }
+    }
+
+    fn validate_against_pages(&self, pages: &[Page]) -> Result<()> {
+        for page in pages {
+            let context = format!("page {}", page.id);
+            if page.width > self.max_dimensions.0 || page.height > self.max_dimensions.1 {
+                return Err(invariant(
+                    context,
+                    format!(
+                        "dimensions {}x{} exceed metadata maximum {}x{}",
+                        page.width, page.height, self.max_dimensions.0, self.max_dimensions.1
+                    ),
+                ));
+            }
+            if self.power_of_two
+                && (!page.width.is_power_of_two() || !page.height.is_power_of_two())
+            {
+                return Err(invariant(
+                    context,
+                    format!(
+                        "dimensions {}x{} are not both powers of two as declared by atlas metadata",
+                        page.width, page.height
+                    ),
+                ));
+            }
+            if self.square && page.width != page.height {
+                return Err(invariant(
+                    context,
+                    format!(
+                        "dimensions {}x{} are not square as declared by atlas metadata",
+                        page.width, page.height
+                    ),
+                ));
+            }
+            if !self.allow_rotation
+                && let Some(region) = page.regions.iter().find(|region| region.rotated)
+            {
+                return Err(invariant(
+                    format!("region {} on page {}", region.id, page.id),
+                    "rotation is disabled by atlas metadata",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for Meta {
@@ -642,8 +724,12 @@ pub struct Atlas {
 }
 
 impl Atlas {
-    pub fn try_new(pages: Vec<Page>, meta: Meta) -> Result<Self> {
+    /// Builds a validated aggregate, expanding descriptive maximum dimensions to cover its pages.
+    /// Other metadata guarantees must already match the supplied geometry.
+    pub fn try_new(pages: Vec<Page>, mut meta: Meta) -> Result<Self> {
         meta.validate()?;
+        meta.expand_max_dimensions_to_cover(&pages);
+        meta.validate_against_pages(&pages)?;
         let mut page_by_id = HashMap::with_capacity(pages.len());
         for (slot, page) in pages.iter().enumerate() {
             if page_by_id.insert(page.id, slot).is_some() {
@@ -712,8 +798,8 @@ impl Atlas {
             page_area,
             content_area,
             allocation_area,
-            content_occupancy: occupancy(content_area, page_area),
-            allocation_occupancy: occupancy(allocation_area, page_area),
+            content_occupancy: area_ratio(content_area, page_area),
+            allocation_occupancy: area_ratio(allocation_area, page_area),
         }
     }
 }
@@ -757,20 +843,20 @@ impl PackStats {
     }
 
     pub fn allocation_waste_percentage(self) -> f64 {
-        if self.page_area == 0 {
-            0.0
-        } else {
-            self.unallocated_area() as f64 / self.page_area as f64 * 100.0
-        }
+        area_percentage(self.unallocated_area(), self.page_area)
     }
 }
 
-fn occupancy(area: u128, page_area: u128) -> f64 {
+pub(crate) fn area_ratio(area: u128, page_area: u128) -> f64 {
     if page_area == 0 {
         0.0
     } else {
         area as f64 / page_area as f64
     }
+}
+
+pub(crate) fn area_percentage(area: u128, page_area: u128) -> f64 {
+    area_ratio(area, page_area) * 100.0
 }
 
 /// Reversible, versioned persistence representation of an [`Atlas`].
@@ -813,7 +899,11 @@ impl AtlasDocument {
             .into_iter()
             .map(PageDocument::try_into_page)
             .collect::<Result<Vec<_>>>()?;
-        Atlas::try_new(pages, self.meta.into()).map_err(as_document_error)
+        let meta = Meta::from(self.meta);
+        meta.validate().map_err(as_document_error)?;
+        meta.validate_against_pages(&pages)
+            .map_err(as_document_error)?;
+        Atlas::try_new(pages, meta).map_err(as_document_error)
     }
 }
 

@@ -164,6 +164,56 @@ fn test_runtime_atlas_evict_by_key_with_clear() {
     assert_eq!(pixel, &Rgba([0, 0, 0, 0]));
 }
 
+fn assert_clear_free_eviction(
+    evict: impl FnOnce(&mut RuntimeAtlas, PageId, &str) -> Option<UpdateRegion>,
+) {
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(64, 64));
+    let mut atlas = RuntimeAtlas::new(cfg);
+    let original = RgbaImage::from_pixel(16, 16, Rgba([255, 0, 0, 255]));
+    let placement = atlas
+        .append_with_image("original".into(), &original)
+        .expect("append original image")
+        .placement()
+        .clone();
+    let pixels_before = atlas
+        .get_page_image(placement.page_id())
+        .expect("pixel page")
+        .as_raw()
+        .clone();
+
+    assert_eq!(
+        evict(&mut atlas, placement.page_id(), "original"),
+        Some(UpdateRegion::empty())
+    );
+    assert!(!atlas.contains("original"));
+    assert_eq!(
+        atlas
+            .get_page_image(placement.page_id())
+            .expect("pixel page remains allocated")
+            .as_raw(),
+        &pixels_before
+    );
+
+    let replacement = RgbaImage::from_pixel(16, 16, Rgba([0, 0, 255, 255]));
+    let replacement = atlas
+        .append_with_image("replacement".into(), &replacement)
+        .expect("reuse the freed allocation")
+        .placement()
+        .clone();
+    assert_eq!(replacement.page_id(), placement.page_id());
+    assert_eq!(replacement.allocation(), placement.allocation());
+}
+
+#[test]
+fn evict_without_clear_preserves_pixels_and_reuses_the_allocation() {
+    assert_clear_free_eviction(|atlas, page_id, key| atlas.evict_with_clear(page_id, key, false));
+}
+
+#[test]
+fn evict_by_key_without_clear_preserves_pixels_and_reuses_the_allocation() {
+    assert_clear_free_eviction(|atlas, _page_id, key| atlas.evict_by_key_with_clear(key, false));
+}
+
 #[test]
 fn test_runtime_atlas_evict_clears_extrude_area() {
     // Configure extrusion and padding, so reserved slot is larger than content

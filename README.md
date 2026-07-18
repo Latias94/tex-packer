@@ -1,74 +1,58 @@
 # tex-packer
 
-A deterministic texture atlas packer for Rust. Use it as a command-line tool, a desktop GUI, or a pure Rust library.
+A deterministic texture atlas packer for Rust. Use it as a command-line tool, a desktop GUI, or an in-memory Rust library.
 
-`tex-packer` supports Skyline, MaxRects, and Guillotine packing; multi-page atlases; identical-content deduplication; trimming; rotation; padding; extrusion; layout-only packing; and JSON, Plist, and engine-template metadata exporters.
+tex-packer supports Skyline, MaxRects, and Guillotine placement; multi-page atlases; identical-content deduplication; trimming; rotation; padding; extrusion; layout-only workflows; and JSON, plist, and engine-template exporters.
 
 ![GUI Overview](https://raw.githubusercontent.com/Latias94/tex-packer/main/screenshots/gui-overview.png)
 
-## Which package should I use?
+## Packages
 
-| Need | Package | What it does |
+| Need | Package | Responsibility |
 | --- | --- | --- |
-| Pack image folders from scripts or CI | `tex-packer-cli` | Reads images from disk and writes atlas PNG pages plus metadata. |
-| Pack visually on desktop | `tex-packer-gui` | Lets you choose folders, tune settings, preview pages, and export. |
-| Integrate packing in your Rust app/tool | `tex-packer-core` | Pure in-memory API with no filesystem side effects. |
+| Pack folders in scripts or CI | `tex-packer-cli` | Reads image files and writes atlas pages plus metadata. |
+| Tune and preview packs on desktop | `tex-packer-gui` | Provides folder selection, validated controls, preview, and export. |
+| Embed packing in a Rust application | `tex-packer-core` | Provides side-effect-free offline and runtime workflows over in-memory data. |
 
 ## Installation
 
-From this repository:
-
-```bash
-# CLI
-cargo install --path crates/tex-packer-cli
-
-# GUI
-cargo run -p tex-packer-gui --release
-```
-
-After the crates are published to crates.io:
+From crates.io:
 
 ```bash
 cargo install tex-packer-cli
 cargo install tex-packer-gui
 ```
 
-For library usage:
+From this repository:
+
+```bash
+cargo install --path crates/tex-packer-cli
+cargo run -p tex-packer-gui --release
+```
+
+Library dependency:
 
 ```toml
 [dependencies]
-tex-packer-core = "0.2"
+tex-packer-core = "0.3"
 image = "0.25"
+serde_json = "1"
 ```
 
-Before crates.io publication, depend on the repository directly:
-
-```toml
-[dependencies]
-tex-packer-core = { git = "https://github.com/Latias94/tex-packer", package = "tex-packer-core" }
-image = "0.25"
-```
-
-## CLI quickstart
-
-Pack all images in a folder:
+## CLI Quickstart
 
 ```bash
 tex-packer pack ./assets --out ./out --name atlas
 ```
 
-Outputs:
+The CLI writes `out/atlas.png` and `out/atlas.json` for one page, or numbered PNG files plus one metadata file for multiple pages.
 
-- Single page: `out/atlas.png` and `out/atlas.json`
-- Multiple pages: `out/atlas_0.png`, `out/atlas_1.png`, ... and `out/atlas.json`
-
-Common recipes:
+Common workflows:
 
 ```bash
 # Higher-quality offline packing
 tex-packer pack ./assets \
   --out ./out \
-  --name atlas \
   --algorithm auto \
   --auto-mode quality \
   --time-budget 500 \
@@ -77,187 +61,151 @@ tex-packer pack ./assets \
   --texture-extrusion 2
 
 # TexturePacker-style plist metadata
-tex-packer pack ./assets --out ./out --name atlas --metadata plist
+tex-packer pack ./assets --out ./out --metadata plist
 
-# Engine template export
-tex-packer template ./assets --out ./out --name atlas --engine unity
-tex-packer template ./assets --out ./out --name atlas --engine godot
-tex-packer template ./assets --out ./out --name atlas --engine phaser3
-tex-packer template ./assets --out ./out --name atlas --engine spine
+# Built-in engine template
+tex-packer template ./assets --out ./out --engine unity
 
-# Layout-only metadata, no PNG compositing
-tex-packer layout ./assets --out ./out --name atlas --metadata json-hash
+# Metadata without page rendering
+tex-packer layout ./assets --out ./out --metadata json-hash
 
-# Include/exclude files
-tex-packer pack ./assets --include "**/*.png" --exclude "**/draft/**"
-
-# Inspect the final merged config without packing
+# Inspect the validated CLI/YAML projection
 tex-packer pack ./assets --print-config --print-config-format yaml
-
-# Dry run: compute layout and stats without writing atlas files
-tex-packer pack ./assets --dry-run --export-stats ./out/stats.json
 ```
 
-Metadata formats:
-
-| Format | Flag | Use when |
-| --- | --- | --- |
-| JSON array | `--metadata json-array` or `json` | You want a simple ordered frame list. |
-| JSON hash | `--metadata json-hash` | You want lookup by sprite name. |
-| Plist | `--metadata plist` | You need TexturePacker-style metadata. |
-| Template | `--metadata template` or `tex-packer template` | You need Unity, Godot, Phaser, Spine, Cocos, Unreal, or a custom Handlebars export. |
-
-Run `tex-packer --help` or `tex-packer pack --help` for all options.
-
-### Parallel auto packing
-
-`--parallel` only takes effect when the CLI is built with the `parallel` feature:
+`--parallel` takes effect when the CLI is built with its `parallel` feature:
 
 ```bash
 cargo run -p tex-packer-cli --features parallel -- \
   pack ./assets --algorithm auto --auto-mode quality --parallel
 ```
 
-## GUI quickstart
+See [the CLI guide](crates/tex-packer-cli/README.md) for configuration, output formats, and template details.
 
-Run the desktop GUI:
+## GUI Quickstart
 
 ```bash
 cargo run -p tex-packer-gui --release
 ```
 
-Basic workflow:
+Pick input and output folders, adjust the packing configuration, select **Pack** to preview, then select **Export** to write PNG and JSON output. See [the GUI guide](crates/tex-packer-gui/README.md) for the complete workflow.
 
-1. Pick an input folder containing images.
-2. Pick an output folder.
-3. Adjust atlas size, algorithm, padding, rotation, trimming, and auto settings.
-4. Click **Pack** to preview atlas pages.
-5. Click **Export** to write PNG pages and JSON metadata.
+## Library Quickstart
 
-The GUI is the easiest way to tune settings interactively. The CLI is better for repeatable build scripts and CI.
-
-## Library quickstart
-
-Use `tex-packer-core` when you already have images in memory or want to embed atlas packing in another Rust tool.
+v0.3 exposes validated workflow facades instead of public placement algorithms and free packing functions.
 
 ```rust
 use std::fs;
 
 use image::ImageReader;
-use tex_packer_core::{InputImage, PackerConfig, pack_images, to_json_hash};
+use tex_packer_core::config::{OfflineConfig, PageConfig};
+use tex_packer_core::export::to_json_hash;
+use tex_packer_core::offline::{InputImage, OfflinePacker};
 
-fn main() -> anyhow::Result<()> {
-    let images = vec![
-        ("hero".to_string(), ImageReader::open("assets/hero.png")?.decode()?),
-        ("enemy".to_string(), ImageReader::open("assets/enemy.png")?.decode()?),
-    ];
-
-    let inputs = images
-        .into_iter()
-        .map(|(key, image)| InputImage { key, image })
-        .collect();
-
-    let config = PackerConfig::builder()
-        .with_max_dimensions(1024, 1024)
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let page = PageConfig::builder()
+        .max_dimensions(1024, 1024)
         .allow_rotation(true)
-        .trim(true)
         .texture_padding(2)
         .texture_extrusion(2)
-        .build();
+        .build()?;
+    let config = OfflineConfig::builder().page_config(page).build()?;
+    let packer = OfflinePacker::new(config);
 
-    let output = pack_images(inputs, config)?;
+    let output = packer.pack_images(vec![
+        InputImage {
+            key: "hero".into(),
+            image: ImageReader::open("assets/hero.png")?.decode()?,
+        },
+        InputImage {
+            key: "enemy".into(),
+            image: ImageReader::open("assets/enemy.png")?.decode()?,
+        },
+    ])?;
 
-    for page in &output.pages {
-        let path = format!("out/atlas_{}.png", page.page.id);
-        page.rgba.save(path)?;
+    fs::create_dir_all("out")?;
+    for rendered in output.pages() {
+        let page = output
+            .atlas()
+            .page(rendered.page_id())
+            .expect("rendered page identity must resolve");
+        rendered.rgba().save(format!("out/atlas_{}.png", page.id()))?;
     }
-
     fs::write(
         "out/atlas.json",
-        serde_json::to_string_pretty(&to_json_hash(&output.atlas))?,
+        serde_json::to_string_pretty(&to_json_hash(output.atlas()))?,
     )?;
-
     Ok(())
 }
 ```
 
-Layout-only packing is useful for engines that upload pixels themselves:
+For size-only packing, construct `LayoutItem` values and call `OfflinePacker::pack_layout`. For decoded images that need trimming and deduplication but not rendered page pixels, call `OfflinePacker::layout_images`.
 
 ```rust
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::OfflineConfig;
+use tex_packer_core::offline::{LayoutItem, OfflinePacker};
 
-let items = vec![("hero", 64, 48), ("enemy", 32, 32), ("coin", 16, 16)];
-let config = PackerConfig::builder()
-    .with_max_dimensions(2048, 2048)
-    .allow_rotation(true)
-    .texture_padding(2)
-    .build();
+# fn example() -> tex_packer_core::Result<()> {
+let packer = OfflinePacker::new(OfflineConfig::default());
+let atlas = packer.pack_layout(vec![
+    LayoutItem {
+        key: "hero".into(),
+        w: 64,
+        h: 48,
+        source: None,
+        source_size: None,
+        trimmed: false,
+    },
+    LayoutItem {
+        key: "coin".into(),
+        w: 16,
+        h: 16,
+        source: None,
+        source_size: None,
+        trimmed: false,
+    },
+])?;
 
-let atlas = pack_layout(items, config)?;
-
-for page in &atlas.pages {
-    for frame in &page.frames {
-        println!("{} => page {}, {:?}", frame.key, page.id, frame.frame);
+for page in atlas.pages() {
+    for resolved in page.resolved_frames() {
+        println!(
+            "{} => page {}, {:?}",
+            resolved.frame().key(),
+            resolved.page_id(),
+            resolved.region().content()
+        );
     }
 }
-# Ok::<(), tex_packer_core::PackError>(())
+# Ok(())
+# }
 ```
 
-For streaming or runtime use, `tex_packer_core::runtime::AtlasSession` supports append/evict workflows with runtime strategies such as Guillotine and Shelf.
+## Core Model
 
-See:
+- `Region` is one physical allocation and owns content geometry, reserved allocation geometry, and rotation.
+- `Frame` is one logical sprite and owns its stable `FrameId`, key, source reconstruction metadata, and `RegionId` reference.
+- `Page::resolved_frames` is the canonical traversal when both logical and physical facts are needed.
+- Offline workflows allow duplicate keys because `FrameId` is authoritative. Native v2 documents, JSON arrays, and templates preserve duplicates; JSON hash keeps the last value, while plist dictionaries are parser-dependent and lossy for repeated keys.
+- Runtime workflows require unique keys and return owned `RuntimePlacement` values.
+- `Atlas` is an invariant-bearing runtime model. Serialize `AtlasDocument` for reversible native persistence; use the `export` module for legacy JSON, plist, and template formats.
 
-- [`crates/tex-packer-core/README.md`](crates/tex-packer-core/README.md) for library API details.
-- [`crates/tex-packer-cli/README.md`](crates/tex-packer-cli/README.md) for CLI options, YAML config, and template exporters.
-- [`crates/tex-packer-gui/README.md`](crates/tex-packer-gui/README.md) for GUI usage.
+See [the core crate guide](crates/tex-packer-core/README.md) for configuration, runtime packing, persistence, exporters, and statistics.
 
-## Recommended defaults
+## v0.3 Migration
 
-| Scenario | Suggested settings |
-| --- | --- |
-| Offline/build-time quality | `--algorithm auto --auto-mode quality --time-budget 500 --allow-rotation --texture-padding 2 --texture-extrusion 2` |
-| Fast repeatable builds | `--algorithm skyline --skyline minwaste --texture-padding 2` |
-| Runtime/layout-only | Use `pack_layout` or `tex-packer layout`; keep trimming off if assets are already prepared. |
-| Engines that need power-of-two or square textures | Add `--pow2`, `--square`, or both. |
-| Avoid texture bleeding | Use `--texture-padding 2 --texture-extrusion 2`. |
+v0.3 intentionally removes the v0.2 `PackerConfig`, public algorithm hierarchy, free packing wrappers, broad prelude, public fields, and direct `Atlas` serde contract. CLI command families and legacy exporter shapes remain stable.
 
-Rule of thumb:
-
-- Choose **Auto Quality** for final offline atlas generation.
-- Choose **Skyline MinWaste** for predictable speed.
-- Choose **layout-only** when your renderer handles pixel uploads.
-
-## Algorithms
-
-- Skyline: BottomLeft, MinWaste, optional Waste Map.
-- MaxRects: BestAreaFit, BestShortSideFit, BestLongSideFit, BottomLeft, ContactPoint.
-- Guillotine: Best/Worst area or side choices plus several split strategies.
-- Auto: evaluates a portfolio and chooses fewer pages first, then smaller total page area.
-
-For large offline packs, `mr_reference` can improve MaxRects placement quality at higher CPU cost. In Auto Quality mode, the core can enable it automatically for larger or more generous time-budgeted jobs.
-
-## Wasm
-
-`tex-packer-core` is designed to build for `wasm32-unknown-unknown` because it has no filesystem side effects:
-
-```bash
-rustup target add wasm32-unknown-unknown
-cargo build -p tex-packer-core --target wasm32-unknown-unknown
-```
-
-In browser/wasm usage, decode images yourself, pass `DynamicImage` values to the core, then consume returned RGBA pages or layout metadata.
+Read [the v0.3 migration guide](docs/migrations/v0.3.md) before upgrading a Rust consumer. The architectural rationale is recorded in [the v0.3 core architecture note](docs/solutions/v0-3-core-architecture.md).
 
 ## Development
 
-Useful local checks:
-
 ```bash
-cargo fmt --check
-cargo check -p tex-packer-core -p tex-packer-cli -p tex-packer-gui
-cargo clippy --workspace --all-targets -- -D warnings
-cargo nextest run --workspace
+cargo fmt --all -- --check
+cargo nextest run --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo check --workspace --all-targets --all-features --locked
 ```
 
 ## Status
 
-Active development. The v0.2 series focuses on correctness, deterministic output, safer placement geometry, stronger regression coverage, and more practical CLI/GUI workflows.
+v0.3 is a deliberate breaking release focused on explicit domain identity, validated configuration, transactional runtime mutation, and a smaller public API.

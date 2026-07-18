@@ -294,6 +294,42 @@ fn physical_allocations_must_not_overlap_but_may_touch() {
 }
 
 #[test]
+fn allocation_sweep_handles_dense_grids_and_non_adjacent_overlap_candidates() {
+    let mut regions = Vec::new();
+    let mut frames = Vec::new();
+    for y in 0..32 {
+        for x in 0..32 {
+            let id = y * 32 + x;
+            let rect = Rect::new(x * 2, y * 2, 1, 1);
+            regions.push(region(id, rect, rect, false));
+            frames.push(frame(
+                id,
+                &format!("sprite-{id}"),
+                id,
+                false,
+                Rect::new(0, 0, 1, 1),
+                (1, 1),
+            ));
+        }
+    }
+    Page::try_new(PageId::new(60), 64, 64, regions, frames)
+        .expect("dense non-overlapping grid must validate");
+
+    let overlapping = Page::try_new(
+        PageId::new(61),
+        16,
+        16,
+        vec![
+            region(1, Rect::new(0, 0, 8, 2), Rect::new(0, 0, 8, 2), false),
+            region(2, Rect::new(0, 4, 8, 2), Rect::new(0, 4, 8, 2), false),
+            region(3, Rect::new(2, 1, 2, 4), Rect::new(2, 1, 2, 4), false),
+        ],
+        vec![],
+    );
+    assert_invariant(overlapping, "page 61", "regions 1 and 3 overlap");
+}
+
+#[test]
 fn source_geometry_must_be_valid_and_match_physical_rotation() {
     let base_region = || region(1, Rect::new(1, 1, 2, 3), Rect::new(0, 0, 4, 5), false);
 

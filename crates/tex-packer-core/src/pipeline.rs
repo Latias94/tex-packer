@@ -22,18 +22,19 @@ pub(crate) fn pack_images_impl(
     inputs: Vec<InputImage>,
     config: &OfflineConfig,
 ) -> Result<PackOutput> {
-    if inputs.is_empty() {
-        return Err(TexPackerError::Empty);
-    }
-
-    let input_keys = input_keys(&inputs);
-    let prepared = prepare_images(inputs, config)?;
-    reject_empty_prepared(&prepared, input_keys)?;
-
+    let prepared = prepare_decoded_inputs(inputs, config)?;
     OfflinePipeline::new(config).pack_images(&prepared)
 }
 
 pub(crate) fn layout_images_impl(inputs: Vec<InputImage>, config: &OfflineConfig) -> Result<Atlas> {
+    let prepared = prepare_decoded_inputs(inputs, config)?;
+    OfflinePipeline::new(config).layout_images(&prepared)
+}
+
+fn prepare_decoded_inputs(
+    inputs: Vec<InputImage>,
+    config: &OfflineConfig,
+) -> Result<Vec<PreparedItem<RgbaImage>>> {
     if inputs.is_empty() {
         return Err(TexPackerError::Empty);
     }
@@ -41,8 +42,7 @@ pub(crate) fn layout_images_impl(inputs: Vec<InputImage>, config: &OfflineConfig
     let input_keys = input_keys(&inputs);
     let prepared = prepare_images(inputs, config)?;
     reject_empty_prepared(&prepared, input_keys)?;
-
-    OfflinePipeline::new(config).layout_images(&prepared)
+    Ok(prepared)
 }
 
 fn input_keys(inputs: &[InputImage]) -> Vec<String> {
@@ -485,10 +485,11 @@ fn build_atlas<T>(
     } else {
         "none"
     };
+    let applies_output_sizing = !config.force_max_dimensions();
     let meta = Meta::for_run(
         page_config,
-        config.power_of_two(),
-        config.square(),
+        applies_output_sizing && config.power_of_two(),
+        applies_output_sizing && config.square(),
         trim_mode,
     );
 

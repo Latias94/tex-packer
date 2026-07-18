@@ -1,5 +1,6 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
+use std::time::{Duration, Instant};
 use tex_packer_core::config::{
     GuillotineChoice, GuillotineSplit, PageConfig, RuntimeConfig, RuntimeStrategy, ShelfPolicy,
     SkylineHeuristic,
@@ -194,6 +195,40 @@ fn bench_append_operations(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_append_after_growth(c: &mut Criterion) {
+    let mut group = c.benchmark_group("append_after_growth");
+
+    for existing_count in [1_000, 10_000] {
+        let cfg = runtime_config(2048, 2048, false, guillotine_strategy());
+        let mut session = AtlasSession::new(cfg);
+        for index in 0..existing_count {
+            session
+                .append(format!("existing_{index}"), 8, 8)
+                .expect("benchmark fixture should fit on one page");
+        }
+        assert_eq!(session.stats().num_pages, 1);
+
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(BenchmarkId::new("Guillotine", existing_count), |b| {
+            b.iter_custom(|iterations| {
+                let mut measured = Duration::ZERO;
+                for _ in 0..iterations {
+                    let started = Instant::now();
+                    let placement = session
+                        .append("append_probe".to_owned(), 8, 8)
+                        .expect("benchmark probe should fit on the existing page");
+                    measured += started.elapsed();
+                    black_box(placement);
+                    assert!(session.evict_by_key("append_probe"));
+                }
+                measured
+            });
+        });
+    }
+
+    group.finish();
+}
+
 fn bench_query_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("query_operations");
 
@@ -331,6 +366,7 @@ criterion_group!(
     benches,
     bench_runtime_strategy,
     bench_append_operations,
+    bench_append_after_growth,
     bench_query_operations,
     bench_evict_operations,
     bench_space_efficiency,

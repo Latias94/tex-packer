@@ -24,7 +24,7 @@ impl ResolvedPackConfig {
 
     pub(crate) fn print(&self, format: &str) -> anyhow::Result<String> {
         match format {
-            "yaml" => Ok(serde_yaml::to_string(&self.printable)?),
+            "yaml" => Ok(serde_yaml_ng::to_string(&self.printable)?),
             _ => Ok(serde_json::to_string_pretty(&self.printable)?),
         }
     }
@@ -36,7 +36,7 @@ pub(crate) fn build_pack_config(cli: &PackArgs) -> anyhow::Result<ResolvedPackCo
     if let Some(path) = &cli.config {
         let file = fs::read_to_string(path)
             .with_context(|| format!("read config file {}", path.display()))?;
-        let patch: FlatConfigPatch = serde_yaml::from_str(&file)
+        let patch = parse_yaml_patch(&file)
             .with_context(|| format!("parse config file {}", path.display()))?;
         apply_yaml_patch(&mut draft, patch, cli.mr_reference)
             .with_context(|| format!("apply config file {}", path.display()))?;
@@ -58,6 +58,40 @@ fn apply_yaml_patch(
     // This is the only historical post-YAML CLI override.
     if force_reference {
         draft.mr_reference = true;
+    }
+    Ok(())
+}
+
+fn parse_yaml_patch(yaml: &str) -> anyhow::Result<FlatConfigPatch> {
+    let value = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(yaml)?;
+    validate_yaml_structure(&value, "$")?;
+    Ok(serde_yaml_ng::from_str(yaml)?)
+}
+
+fn validate_yaml_structure(value: &serde_yaml_ng::Value, path: &str) -> anyhow::Result<()> {
+    use serde_yaml_ng::Value;
+
+    match value {
+        Value::Sequence(sequence) => {
+            for (index, item) in sequence.iter().enumerate() {
+                validate_yaml_structure(item, &format!("{path}[{index}]"))?;
+            }
+        }
+        Value::Mapping(mapping) => {
+            for (index, (key, item)) in mapping.iter().enumerate() {
+                validate_yaml_structure(key, &format!("{path}.<key:{index}>"))?;
+                if matches!(key, Value::String(key) if key == "<<") {
+                    anyhow::bail!("YAML merge key `<<` is not supported at {path}");
+                }
+                let item_path = match key {
+                    Value::String(key) => format!("{path}.{key}"),
+                    _ => format!("{path}[value:{index}]"),
+                };
+                validate_yaml_structure(item, &item_path)?;
+            }
+        }
+        Value::Tagged(_) => anyhow::bail!("YAML tags are not supported at {path}"),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
     Ok(())
 }
@@ -310,6 +344,7 @@ impl FlatConfigDto {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct FlatConfigPatch {
     family: Option<String>,
     skyline: Option<String>,
@@ -344,7 +379,7 @@ mod tests {
     use super::*;
 
     fn apply_yaml(yaml: &str, mut base: FlatConfigDto) -> anyhow::Result<FlatConfigDto> {
-        let patch = serde_yaml::from_str::<FlatConfigPatch>(yaml)?;
+        let patch = parse_yaml_patch(yaml)?;
         base.apply_patch(patch)?;
         Ok(base)
     }
@@ -496,10 +531,8 @@ transparent_policy: one_by_one
             mr_reference: true,
             ..Default::default()
         };
-        let patch = serde_yaml::from_str::<FlatConfigPatch>(
-            "max_width: 640\nallow_rotation: false\nmr_reference: false",
-        )
-        .unwrap();
+        let patch =
+            parse_yaml_patch("max_width: 640\nallow_rotation: false\nmr_reference: false").unwrap();
 
         apply_yaml_patch(&mut draft, patch, true).unwrap();
 
@@ -667,7 +700,7 @@ transparent_policy: one_by_one
             "y", "Y", "yes", "Yes", "YES", "n", "N", "no", "No", "NO", "on", "On", "ON", "off",
             "Off", "OFF",
         ] {
-            let error = serde_yaml::from_str::<FlatConfigPatch>(&format!("trim: {raw}"))
+            let error = parse_yaml_patch(&format!("trim: {raw}"))
                 .expect_err("YAML 1.1-only boolean words are strings in the current parser");
             let message = error.to_string();
             assert!(message.contains("invalid type: string"), "{raw}: {message}");
@@ -708,54 +741,13 @@ transparent_policy: one_by_one
     }
 
     #[test]
-    fn yaml_unknown_fields_are_currently_ignored() {
-        let cfg = apply_yaml(
-            "max_width: 640\nfuture_option: enabled",
-            FlatConfigDto::default(),
-        )
-        .unwrap();
-
-        assert_eq!(cfg.max_width, 640);
-    }
-
-    #[test]
-    fn yaml_tags_are_currently_ignored() {
-        let cfg = apply_yaml(
-            "max_width: !pixels 640\nallow_rotation: !switch false",
-            FlatConfigDto::default(),
-        )
-        .unwrap();
-
-        assert_eq!(cfg.max_width, 640);
-        assert!(!cfg.allow_rotation);
-    }
-
-    #[test]
-    fn yaml_merge_keys_are_currently_ignored_without_expansion() {
-        let cfg = apply_yaml(
-            r#"
-defaults: &defaults
-  max_width: 640
-  allow_rotation: false
-<<: *defaults
-max_height: 720
-"#,
-            FlatConfigDto::default(),
-        )
-        .unwrap();
-
-        assert_eq!(cfg.max_width, FlatConfigDto::default().max_width);
-        assert_eq!(cfg.allow_rotation, FlatConfigDto::default().allow_rotation);
-        assert_eq!(cfg.max_height, 720);
-    }
-
-    #[test]
     fn yaml_duplicate_keys_are_rejected() {
-        let error = serde_yaml::from_str::<FlatConfigPatch>("max_width: 640\nmax_width: 720")
+        let error = parse_yaml_patch("max_width: 640\nmax_width: 720")
             .expect_err("duplicate YAML keys must be rejected");
         let message = error.to_string();
 
-        assert!(message.contains("duplicate field `max_width`"), "{message}");
+        assert!(message.contains("duplicate"), "{message}");
+        assert!(message.contains("max_width"), "{message}");
     }
 
     #[test]
@@ -788,7 +780,7 @@ max_height: 720
             auto_mr_ref_input_threshold: Some(900),
             transparent_policy: "one_by_one".into(),
         };
-        let printed = serde_yaml::to_string(&source).unwrap();
+        let printed = serde_yaml_ng::to_string(&source).unwrap();
         let reparsed = apply_yaml(&printed, FlatConfigDto::default()).unwrap();
 
         assert_eq!(reparsed, source);
@@ -799,27 +791,80 @@ max_height: 720
     }
 
     #[test]
-    #[ignore = "U7: reject unknown YAML fields instead of silently ignoring them"]
     fn yaml_unknown_fields_must_be_rejected() {
-        apply_yaml("future_option: enabled", FlatConfigDto::default())
-            .expect_err("U7 must deny unknown fields");
+        let error = apply_yaml(
+            "max_width: 640\nfuture_option: enabled",
+            FlatConfigDto::default(),
+        )
+        .expect_err("U7 must deny unknown fields");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("unknown field `future_option`"),
+            "{message}"
+        );
+        assert!(message.contains("line 2"), "{message}");
     }
 
     #[test]
-    #[ignore = "U7: reject YAML tags instead of silently discarding them"]
     fn yaml_tags_must_be_rejected() {
-        apply_yaml("max_width: !pixels 640", FlatConfigDto::default())
+        let error = apply_yaml("max_width: !pixels 640", FlatConfigDto::default())
             .expect_err("U7 must reject YAML tags");
+        let message = error.to_string();
+
+        assert!(message.contains("YAML tags are not supported"), "{message}");
+        assert!(message.contains("$.max_width"), "{message}");
     }
 
     #[test]
-    #[ignore = "U7: reject YAML merge keys instead of silently ignoring them"]
     fn yaml_merge_keys_must_be_rejected() {
-        apply_yaml(
+        let error = apply_yaml(
             "defaults: &defaults { max_width: 640 }\n<<: *defaults",
             FlatConfigDto::default(),
         )
         .expect_err("U7 must reject YAML merge keys");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("YAML merge key `<<` is not supported"),
+            "{message}"
+        );
+        assert!(message.contains('$'), "{message}");
+    }
+
+    #[test]
+    fn yaml_nested_tags_are_rejected_before_typed_deserialization() {
+        let error = parse_yaml_patch("future:\n  nested: !custom value")
+            .expect_err("nested YAML tags must be rejected structurally");
+        let message = error.to_string();
+
+        assert!(message.contains("YAML tags are not supported"), "{message}");
+        assert!(message.contains("$.future.nested"), "{message}");
+    }
+
+    #[test]
+    fn yaml_nested_merge_keys_are_rejected_before_typed_deserialization() {
+        let error = parse_yaml_patch("future:\n  <<: { max_width: 1 }")
+            .expect_err("nested YAML merge keys must be rejected structurally");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("YAML merge key `<<` is not supported"),
+            "{message}"
+        );
+        assert!(message.contains("$.future"), "{message}");
+    }
+
+    #[test]
+    fn yaml_type_errors_retain_field_and_source_location() {
+        let error = parse_yaml_patch("max_width: 640\ntrim: not-a-bool")
+            .expect_err("invalid field types must retain YAML source context");
+        let message = error.to_string();
+
+        assert!(message.contains("trim"), "{message}");
+        assert!(message.contains("expected a boolean"), "{message}");
+        assert!(message.contains("line 2"), "{message}");
+        assert!(message.contains("column"), "{message}");
     }
 
     #[test]
@@ -829,7 +874,7 @@ max_height: 720
             skyline: "minwaste".into(),
             ..Default::default()
         };
-        let printed = serde_yaml::to_string(&source).unwrap();
+        let printed = serde_yaml_ng::to_string(&source).unwrap();
         let reparsed = apply_yaml(&printed, FlatConfigDto::default()).unwrap();
 
         assert_eq!(reparsed.heuristic, source.heuristic);

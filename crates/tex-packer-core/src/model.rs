@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Axis-aligned rectangle (pixels). `x,y` is top-left; `w,h` are sizes.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Rect {
     pub x: u32,
     pub y: u32,
@@ -88,11 +89,15 @@ pub struct PackStats {
     pub num_pages: usize,
     /// Total number of frames (textures) packed.
     pub num_frames: usize,
+    /// Total number of physical atlas regions occupied.
+    pub num_regions: usize,
+    /// Number of logical frames reusing an existing physical region.
+    pub num_deduplicated: usize,
     /// Total area of all pages (sum of width * height for each page).
     pub total_page_area: u64,
-    /// Total area used by all frames (sum of frame width * height).
-    pub used_frame_area: u64,
-    /// Occupancy ratio: used_frame_area / total_page_area (0.0 to 1.0).
+    /// Total area used by unique physical regions.
+    pub used_region_area: u64,
+    /// Occupancy ratio: used_region_area / total_page_area (0.0 to 1.0).
     /// Higher is better (less wasted space).
     pub occupancy: f64,
     /// Average page dimensions.
@@ -112,8 +117,9 @@ impl<K> Atlas<K> {
     pub fn stats(&self) -> PackStats {
         let num_pages = self.pages.len();
         let mut num_frames = 0;
+        let mut num_regions = 0;
         let mut total_page_area = 0u64;
-        let mut used_frame_area = 0u64;
+        let mut used_region_area = 0u64;
         let mut max_page_width = 0u32;
         let mut max_page_height = 0u32;
         let mut num_rotated = 0;
@@ -124,11 +130,11 @@ impl<K> Atlas<K> {
             total_page_area += page_area;
             max_page_width = max_page_width.max(page.width);
             max_page_height = max_page_height.max(page.height);
+            let mut physical_regions = HashSet::new();
 
             for frame in &page.frames {
                 num_frames += 1;
-                let frame_area = (frame.frame.w as u64) * (frame.frame.h as u64);
-                used_frame_area += frame_area;
+                physical_regions.insert(frame.frame);
 
                 if frame.rotated {
                     num_rotated += 1;
@@ -137,10 +143,16 @@ impl<K> Atlas<K> {
                     num_trimmed += 1;
                 }
             }
+
+            num_regions += physical_regions.len();
+            used_region_area += physical_regions
+                .iter()
+                .map(|region| (region.w as u64) * (region.h as u64))
+                .sum::<u64>();
         }
 
         let occupancy = if total_page_area > 0 {
-            used_frame_area as f64 / total_page_area as f64
+            used_region_area as f64 / total_page_area as f64
         } else {
             0.0
         };
@@ -159,8 +171,10 @@ impl<K> Atlas<K> {
         PackStats {
             num_pages,
             num_frames,
+            num_regions,
+            num_deduplicated: num_frames.saturating_sub(num_regions),
             total_page_area,
-            used_frame_area,
+            used_region_area,
             occupancy,
             avg_page_width,
             avg_page_height,
@@ -176,12 +190,14 @@ impl PackStats {
     /// Returns a human-readable summary of the statistics.
     pub fn summary(&self) -> String {
         format!(
-            "Pages: {}, Frames: {}, Occupancy: {:.2}%, Total Area: {} px², Used Area: {} px², Rotated: {}, Trimmed: {}",
+            "Pages: {}, Frames: {}, Regions: {}, Deduplicated: {}, Occupancy: {:.2}%, Total Area: {} px², Used Area: {} px², Rotated: {}, Trimmed: {}",
             self.num_pages,
             self.num_frames,
+            self.num_regions,
+            self.num_deduplicated,
             self.occupancy * 100.0,
             self.total_page_area,
-            self.used_frame_area,
+            self.used_region_area,
             self.num_rotated,
             self.num_trimmed,
         )
@@ -189,7 +205,7 @@ impl PackStats {
 
     /// Returns wasted space in pixels.
     pub fn wasted_area(&self) -> u64 {
-        self.total_page_area.saturating_sub(self.used_frame_area)
+        self.total_page_area.saturating_sub(self.used_region_area)
     }
 
     /// Returns wasted space as a percentage (0.0 to 100.0).

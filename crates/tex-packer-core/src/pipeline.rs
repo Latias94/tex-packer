@@ -6,6 +6,7 @@ use crate::model::{Atlas, Frame, Meta, Page, Rect};
 use crate::packer::{
     Packer, guillotine::GuillotinePacker, maxrects::MaxRectsPacker, skyline::SkylinePacker,
 };
+use crate::packing_plan::PackingPlan;
 use crate::preparation::{PreparedItem, prepare_images, prepare_layout, prepare_layout_items};
 use image::{DynamicImage, RgbaImage};
 use std::collections::HashSet;
@@ -64,9 +65,25 @@ pub fn pack_images(inputs: Vec<InputImage>, cfg: PackerConfig) -> Result<PackOut
 }
 
 #[derive(Clone)]
-struct PackedFrame {
-    item_index: usize,
-    frame: Frame,
+struct PackedRegion {
+    canonical_item_index: usize,
+    alias_item_indices: Vec<usize>,
+    frame: Rect,
+    rotated: bool,
+}
+
+impl PackedRegion {
+    fn logical_frame<T>(&self, prepared: &[PreparedItem<T>], item_index: usize) -> Frame {
+        let item = &prepared[item_index];
+        Frame {
+            key: item.key.clone(),
+            frame: self.frame,
+            rotated: self.rotated,
+            trimmed: item.trimmed,
+            source: item.source,
+            source_size: item.orig_size,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -74,20 +91,30 @@ struct PackedPage {
     id: usize,
     width: u32,
     height: u32,
-    frames: Vec<PackedFrame>,
+    regions: Vec<PackedRegion>,
 }
 
 impl PackedPage {
-    fn public_frames(&self) -> Vec<Frame> {
-        self.frames.iter().map(|f| f.frame.clone()).collect()
+    fn public_frames<T>(&self, prepared: &[PreparedItem<T>]) -> Vec<Frame> {
+        let mut frames = self
+            .regions
+            .iter()
+            .flat_map(|region| {
+                std::iter::once(region.canonical_item_index)
+                    .chain(region.alias_item_indices.iter().copied())
+                    .map(|item_index| (item_index, region.logical_frame(prepared, item_index)))
+            })
+            .collect::<Vec<_>>();
+        frames.sort_by_key(|(item_index, _)| *item_index);
+        frames.into_iter().map(|(_, frame)| frame).collect()
     }
 
-    fn to_page(&self) -> Page {
+    fn to_page<T>(&self, prepared: &[PreparedItem<T>]) -> Page {
         Page {
             id: self.id,
             width: self.width,
             height: self.height,
-            frames: self.public_frames(),
+            frames: self.public_frames(prepared),
         }
     }
 }
@@ -102,25 +129,35 @@ impl<'a> OfflinePipeline<'a> {
     }
 
     fn pack_images(&self, prepared: &[PreparedItem<RgbaImage>]) -> Result<PackOutput> {
-        let packed_pages = self.pack_pages(prepared)?;
+        let plan = PackingPlan::deduplicated(prepared);
+        let packed_pages = self.pack_pages(prepared, &plan)?;
         Ok(self.build_output(prepared, &packed_pages))
     }
 
     fn pack_layout<T: Sync>(&self, prepared: &[PreparedItem<T>]) -> Result<Atlas> {
-        let packed_pages = self.pack_pages(prepared)?;
-        Ok(self.build_atlas(&packed_pages))
+        let plan = PackingPlan::one_per_item(prepared.len());
+        let packed_pages = self.pack_pages(prepared, &plan)?;
+        Ok(self.build_atlas(prepared, &packed_pages))
     }
 
-    fn pack_pages<T: Sync>(&self, prepared: &[PreparedItem<T>]) -> Result<Vec<PackedPage>> {
+    fn pack_pages<T: Sync>(
+        &self,
+        prepared: &[PreparedItem<T>],
+        plan: &PackingPlan,
+    ) -> Result<Vec<PackedPage>> {
         if matches!(self.cfg.family, AlgorithmFamily::Auto) {
-            return pack_auto_pages(prepared, self.cfg.clone());
+            return pack_auto_pages(prepared, plan, self.cfg.clone());
         }
 
-        self.pack_pages_for_family(prepared)
+        self.pack_pages_for_family(prepared, plan)
     }
 
-    fn pack_pages_for_family<T>(&self, prepared: &[PreparedItem<T>]) -> Result<Vec<PackedPage>> {
-        pack_pages_for_family(prepared, self.cfg)
+    fn pack_pages_for_family<T>(
+        &self,
+        prepared: &[PreparedItem<T>],
+        plan: &PackingPlan,
+    ) -> Result<Vec<PackedPage>> {
+        pack_pages_for_family(prepared, plan, self.cfg)
     }
 
     fn build_output(
@@ -132,13 +169,13 @@ impl<'a> OfflinePipeline<'a> {
             .iter()
             .map(|packed_page| render_output_page(prepared, packed_page, self.cfg))
             .collect();
-        let atlas = self.build_atlas(packed_pages);
+        let atlas = self.build_atlas(prepared, packed_pages);
 
         PackOutput { atlas, pages }
     }
 
-    fn build_atlas(&self, packed_pages: &[PackedPage]) -> Atlas {
-        build_atlas(packed_pages, self.cfg)
+    fn build_atlas<T>(&self, prepared: &[PreparedItem<T>], packed_pages: &[PackedPage]) -> Atlas {
+        build_atlas(prepared, packed_pages, self.cfg)
     }
 }
 
@@ -148,34 +185,34 @@ fn pack_prepared(prepared: &[PreparedItem<RgbaImage>], cfg: &PackerConfig) -> Re
 
 fn pack_pages_for_family<T>(
     prepared: &[PreparedItem<T>],
+    plan: &PackingPlan,
     cfg: &PackerConfig,
 ) -> Result<Vec<PackedPage>> {
     let mut pages: Vec<PackedPage> = Vec::new();
-    // Remaining indices to place (in sorted order)
-    let mut remaining: Vec<usize> = (0..prepared.len()).collect();
+    let mut remaining: Vec<usize> = (0..plan.len()).collect();
     let mut page_id = 0usize;
 
     while !remaining.is_empty() {
         let mut packer = create_packer(cfg);
-        let mut frames: Vec<PackedFrame> = Vec::new();
+        let mut regions: Vec<PackedRegion> = Vec::new();
 
         loop {
             let mut placed_any = false;
             let mut remove_set: HashSet<usize> = HashSet::new();
-            for &idx in &remaining {
-                let p = &prepared[idx];
-                if !packer.can_pack(&p.rect) {
+            for &group_index in &remaining {
+                let group = plan.group(group_index);
+                let item = &prepared[group.canonical_item_index()];
+                if !packer.can_pack(&item.rect) {
                     continue;
                 }
-                if let Some(mut f) = packer.pack(p.key.clone(), &p.rect) {
-                    f.trimmed = p.trimmed;
-                    f.source = p.source;
-                    f.source_size = p.orig_size;
-                    frames.push(PackedFrame {
-                        item_index: idx,
-                        frame: f,
+                if let Some(frame) = packer.pack(item.key.clone(), &item.rect) {
+                    regions.push(PackedRegion {
+                        canonical_item_index: group.canonical_item_index(),
+                        alias_item_indices: group.alias_item_indices().to_vec(),
+                        frame: frame.frame,
+                        rotated: frame.rotated,
                     });
-                    remove_set.insert(idx);
+                    remove_set.insert(group_index);
                     placed_any = true;
                 }
             }
@@ -188,24 +225,29 @@ fn pack_pages_for_family<T>(
             }
         }
 
-        if frames.is_empty() {
-            // No textures could be placed on this page - likely first texture is too large
-            let placed = prepared.len() - remaining.len();
+        if regions.is_empty() {
+            let remaining_items = remaining
+                .iter()
+                .map(|&group_index| plan.group(group_index).logical_item_count())
+                .sum::<usize>();
+            let placed = prepared.len() - remaining_items;
             return Err(TexPackerError::OutOfSpaceGeneric {
                 placed,
                 total: prepared.len(),
             });
         }
 
-        // Compute final page size via helper to keep logic consistent across APIs
-        let public_frames: Vec<Frame> = frames.iter().map(|f| f.frame.clone()).collect();
-        let (page_w, page_h) = compute_page_size(&public_frames, cfg);
+        let physical_frames = regions
+            .iter()
+            .map(|region| region.logical_frame(prepared, region.canonical_item_index))
+            .collect::<Vec<_>>();
+        let (page_w, page_h) = compute_page_size(&physical_frames, cfg);
 
         pages.push(PackedPage {
             id: page_id,
             width: page_w,
             height: page_h,
-            frames,
+            regions,
         });
         page_id += 1;
     }
@@ -234,10 +276,14 @@ fn render_output_page(
     cfg: &PackerConfig,
 ) -> OutputPage {
     let mut canvas = RgbaImage::new(packed_page.width, packed_page.height);
-    for packed_frame in &packed_page.frames {
-        let prep = &prepared[packed_frame.item_index];
-        let f = &packed_frame.frame;
-        let dst = crate::compositing::BlitRect::new(f.frame.x, f.frame.y, f.frame.w, f.frame.h);
+    for region in &packed_page.regions {
+        let prep = &prepared[region.canonical_item_index];
+        let dst = crate::compositing::BlitRect::new(
+            region.frame.x,
+            region.frame.y,
+            region.frame.w,
+            region.frame.h,
+        );
         let src = crate::compositing::BlitRect::new(
             prep.source.x,
             prep.source.y,
@@ -245,7 +291,7 @@ fn render_output_page(
             prep.source.h,
         );
         let options = crate::compositing::BlitOptions {
-            rotated: f.rotated,
+            rotated: region.rotated,
             extrude: cfg.texture_extrusion,
             outlines: cfg.texture_outlines,
         };
@@ -253,13 +299,20 @@ fn render_output_page(
     }
 
     OutputPage {
-        page: packed_page.to_page(),
+        page: packed_page.to_page(prepared),
         rgba: canvas,
     }
 }
 
-fn build_atlas(packed_pages: &[PackedPage], cfg: &PackerConfig) -> Atlas {
-    let atlas_pages = packed_pages.iter().map(PackedPage::to_page).collect();
+fn build_atlas<T>(
+    prepared: &[PreparedItem<T>],
+    packed_pages: &[PackedPage],
+    cfg: &PackerConfig,
+) -> Atlas {
+    let atlas_pages = packed_pages
+        .iter()
+        .map(|page| page.to_page(prepared))
+        .collect();
     let meta = Meta {
         schema_version: "1".into(),
         app: "tex-packer".into(),
@@ -291,10 +344,11 @@ fn total_packed_area(pages: &[PackedPage]) -> u64 {
 
 fn pack_auto_pages<T: Sync>(
     prepared: &[PreparedItem<T>],
+    plan: &PackingPlan,
     base: PackerConfig,
 ) -> Result<Vec<PackedPage>> {
     let mut candidates: Vec<PackerConfig> = Vec::new();
-    let n_inputs = prepared.len();
+    let n_inputs = plan.len();
     let budget_ms = base.time_budget_ms.unwrap_or(0);
     let thr_time = base.auto_mr_ref_time_ms_threshold.unwrap_or(200);
     let thr_inputs = base.auto_mr_ref_input_threshold.unwrap_or(800);
@@ -347,7 +401,7 @@ fn pack_auto_pages<T: Sync>(
         if base.parallel {
             let results: Vec<(Vec<PackedPage>, u64, u32)> = candidates
                 .par_iter()
-                .filter_map(|cand| pack_pages_for_family(prepared, cand).ok())
+                .filter_map(|cand| pack_pages_for_family(prepared, plan, cand).ok())
                 .map(|pages| {
                     let page_count = pages.len() as u32;
                     let total_area = total_packed_area(&pages);
@@ -372,7 +426,7 @@ fn pack_auto_pages<T: Sync>(
         if budget_ms > 0 && start.elapsed().as_millis() as u64 > budget_ms {
             break;
         }
-        if let Ok(packed_pages) = pack_pages_for_family(prepared, &cand) {
+        if let Ok(packed_pages) = pack_pages_for_family(prepared, plan, &cand) {
             let pages = packed_pages.len() as u32;
             let total_area = total_packed_area(&packed_pages);
             match &mut best {

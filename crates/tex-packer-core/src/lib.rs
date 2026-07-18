@@ -31,6 +31,7 @@ mod free_space;
 mod geometry;
 pub mod model;
 pub mod packer;
+mod packing_plan;
 pub mod pipeline;
 mod preparation;
 pub mod runtime;

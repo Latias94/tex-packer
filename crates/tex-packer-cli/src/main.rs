@@ -229,16 +229,11 @@ fn run_bench(b: &BenchArgs) -> anyhow::Result<()> {
     let start = Instant::now();
     let out = pack_images(inputs, cfg)?;
     let dur = start.elapsed();
-    let (used, total) = output_writer::pack_output_stats(&out);
-    let occ = if total > 0 {
-        used as f64 / total as f64 * 100.0
-    } else {
-        0.0
-    };
+    let stats = out.stats();
     println!(
         "pages={} occupancy={:.2}% time={}",
         out.pages.len(),
-        occ,
+        stats.occupancy * 100.0,
         bench_fmt_dur(dur)
     );
     Ok(())

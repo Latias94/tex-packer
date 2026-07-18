@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use handlebars::Handlebars;
 use serde_json::json;
-use tex_packer_core::{Atlas, PackOutput};
+use tex_packer_core::{Atlas, PackOutput, PackStats};
 use tracing::info;
 
 use crate::PackArgs;
@@ -116,14 +116,7 @@ pub(crate) fn export_layout_stats(
     stats_path: &PathBuf,
     atlas: &Atlas<String>,
 ) -> anyhow::Result<()> {
-    let (used, total) = atlas_stats(atlas);
-    let occupancy = occupancy(used, total);
-    let value = json!({
-        "pages": atlas.pages.len(),
-        "used_area": used,
-        "total_area": total,
-        "occupancy": occupancy,
-    });
+    let value = stats_json(&atlas.stats());
     fs::write(stats_path, serde_json::to_string_pretty(&value)?)
         .with_context(|| format!("write {}", stats_path.display()))?;
     Ok(())
@@ -134,52 +127,37 @@ pub(crate) fn export_pack_stats(cli: &PackArgs, output: &PackOutput) -> anyhow::
         return Ok(());
     };
 
-    let (used_area, total_area) = pack_output_stats(output);
-    let occupancy = occupancy(used_area, total_area);
-    let value = json!({
-        "pages": output.pages.len(),
-        "used_area": used_area,
-        "total_area": total_area,
-        "occupancy": occupancy,
-    });
+    let stats = output.stats();
+    let value = stats_json(&stats);
     if !cli.dry_run {
         fs::write(stats_path, serde_json::to_string_pretty(&value)?)
             .with_context(|| format!("write {}", stats_path.display()))?;
         info!(?stats_path, "stats exported");
     } else {
         println!(
-            "pages={} used_area={} total_area={} occupancy={:.2}%",
-            output.pages.len(),
-            used_area,
-            total_area,
-            occupancy * 100.0
+            "pages={} frames={} regions={} deduplicated={} used_area={} total_area={} occupancy={:.2}%",
+            stats.num_pages,
+            stats.num_frames,
+            stats.num_regions,
+            stats.num_deduplicated,
+            stats.used_region_area,
+            stats.total_page_area,
+            stats.occupancy * 100.0
         );
     }
     Ok(())
 }
 
-pub(crate) fn pack_output_stats(output: &PackOutput) -> (u64, u64) {
-    atlas_stats(&output.atlas)
-}
-
-fn atlas_stats<K>(atlas: &Atlas<K>) -> (u64, u64) {
-    let mut used = 0u64;
-    let mut total = 0u64;
-    for page in &atlas.pages {
-        total += (page.width as u64) * (page.height as u64);
-        for frame in &page.frames {
-            used += (frame.frame.w as u64) * (frame.frame.h as u64);
-        }
-    }
-    (used, total)
-}
-
-pub(crate) fn occupancy(used: u64, total: u64) -> f64 {
-    if total > 0 {
-        used as f64 / total as f64
-    } else {
-        0.0
-    }
+fn stats_json(stats: &PackStats) -> serde_json::Value {
+    json!({
+        "pages": stats.num_pages,
+        "frames": stats.num_frames,
+        "regions": stats.num_regions,
+        "deduplicated": stats.num_deduplicated,
+        "used_area": stats.used_region_area,
+        "total_area": stats.total_page_area,
+        "occupancy": stats.occupancy,
+    })
 }
 
 fn write_json(path: PathBuf, value: serde_json::Value) -> anyhow::Result<()> {
@@ -263,5 +241,36 @@ fn atlas_page_names<K>(pages: &[tex_packer_core::Page<K>], atlas_name: &str) -> 
             .iter()
             .map(|page| format!("{}_{}.png", atlas_name, page.id))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stats_json;
+    use tex_packer_core::PackStats;
+
+    #[test]
+    fn stats_json_distinguishes_frames_from_regions() {
+        let value = stats_json(&PackStats {
+            num_pages: 1,
+            num_frames: 3,
+            num_regions: 2,
+            num_deduplicated: 1,
+            total_page_area: 64,
+            used_region_area: 20,
+            occupancy: 0.3125,
+            avg_page_width: 8.0,
+            avg_page_height: 8.0,
+            max_page_width: 8,
+            max_page_height: 8,
+            num_rotated: 0,
+            num_trimmed: 0,
+        });
+
+        assert_eq!(value["frames"], 3);
+        assert_eq!(value["regions"], 2);
+        assert_eq!(value["deduplicated"], 1);
+        assert_eq!(value["used_area"], 20);
+        assert_eq!(value["occupancy"], 0.3125);
     }
 }

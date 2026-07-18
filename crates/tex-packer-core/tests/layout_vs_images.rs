@@ -140,9 +140,14 @@ fn layout_and_images_match_when_packing_spills_to_multiple_pages() {
     let out = tex_packer_core::pack_images(
         sizes
             .iter()
-            .map(|(key, w, h)| InputImage {
+            .enumerate()
+            .map(|(index, (key, w, h))| InputImage {
                 key: (*key).to_string(),
-                image: DynamicImage::ImageRgba8(RgbaImage::new(*w, *h)),
+                image: DynamicImage::ImageRgba8(RgbaImage::from_pixel(
+                    *w,
+                    *h,
+                    Rgba([index as u8, 0, 0, 255]),
+                )),
             })
             .collect(),
         cfg,

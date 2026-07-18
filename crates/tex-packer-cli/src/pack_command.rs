@@ -8,8 +8,8 @@ use crate::PackArgs;
 use crate::config_adapter;
 use crate::input_loader::{gather_paths, load_images_with_progress};
 use crate::output_writer::{
-    export_layout_stats, export_pack_stats, occupancy, pack_output_stats, render_template,
-    validate_metadata_mode, write_layout_metadata, write_output_pages, write_pack_metadata,
+    export_layout_stats, export_pack_stats, render_template, validate_metadata_mode,
+    write_layout_metadata, write_output_pages, write_pack_metadata,
 };
 
 #[instrument(skip_all)]
@@ -120,13 +120,15 @@ fn run_image_pack(
 }
 
 fn log_pack_stats(output: &PackOutput) {
-    let (used_area, total_area) = pack_output_stats(output);
-    let occupancy = occupancy(used_area, total_area);
+    let stats = output.stats();
     info!(
-        pages = output.pages.len(),
-        used_area,
-        total_area,
-        occupancy = format!("{:.2}%", occupancy * 100.0),
+        pages = stats.num_pages,
+        frames = stats.num_frames,
+        regions = stats.num_regions,
+        deduplicated = stats.num_deduplicated,
+        used_area = stats.used_region_area,
+        total_area = stats.total_page_area,
+        occupancy = format!("{:.2}%", stats.occupancy * 100.0),
         "stats"
     );
 }

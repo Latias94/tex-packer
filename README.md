@@ -2,7 +2,7 @@
 
 A deterministic texture atlas packer for Rust. Use it as a command-line tool, a desktop GUI, or a pure Rust library.
 
-`tex-packer` supports Skyline, MaxRects, and Guillotine packing; multi-page atlases; trimming; rotation; padding; extrusion; layout-only packing; and JSON, Plist, and engine-template metadata exporters.
+`tex-packer` supports Skyline, MaxRects, and Guillotine packing; multi-page atlases; identical-content deduplication; trimming; rotation; padding; extrusion; layout-only packing; and JSON, Plist, and engine-template metadata exporters.
 
 ![GUI Overview](https://raw.githubusercontent.com/Latias94/tex-packer/main/screenshots/gui-overview.png)
 

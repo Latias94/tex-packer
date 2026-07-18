@@ -1,4 +1,4 @@
-use image::{DynamicImage, RgbaImage};
+use image::{DynamicImage, Rgba, RgbaImage};
 use tex_packer_core::prelude::*;
 
 #[test]
@@ -14,10 +14,11 @@ fn test_pack_stats_basic() {
         ..Default::default()
     };
 
-    // Create 4 textures of 64x64 each
+    // Create 4 unique textures of 64x64 each
     let mut inputs = Vec::new();
     for i in 0..4 {
-        let img = DynamicImage::ImageRgba8(RgbaImage::new(64, 64));
+        let img =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(64, 64, Rgba([i as u8, 0, 0, 255])));
         inputs.push(InputImage {
             key: format!("tex_{}", i),
             image: img,
@@ -32,14 +33,16 @@ fn test_pack_stats_basic() {
     assert!(stats.num_pages >= 1);
 
     // Each frame is 64x64 = 4096 pixels
-    assert_eq!(stats.used_frame_area, 4 * 64 * 64);
+    assert_eq!(stats.num_regions, 4);
+    assert_eq!(stats.num_deduplicated, 0);
+    assert_eq!(stats.used_region_area, 4 * 64 * 64);
 
     // Occupancy should be reasonable (at least 25% for this simple case)
     assert!(stats.occupancy > 0.25, "Occupancy: {}", stats.occupancy);
     assert!(stats.occupancy <= 1.0);
 
     // Total page area should be >= used area
-    assert!(stats.total_page_area >= stats.used_frame_area);
+    assert!(stats.total_page_area >= stats.used_region_area);
 
     // No rotations or trimming in this test
     assert_eq!(stats.num_rotated, 0);
@@ -63,7 +66,8 @@ fn test_pack_stats_with_rotation() {
     // Create some rectangular textures that might benefit from rotation
     let mut inputs = Vec::new();
     for i in 0..3 {
-        let img = DynamicImage::ImageRgba8(RgbaImage::new(80, 40));
+        let img =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(80, 40, Rgba([i as u8, 0, 0, 255])));
         inputs.push(InputImage {
             key: format!("rect_{}", i),
             image: img,
@@ -100,7 +104,7 @@ fn test_pack_stats_with_trimming() {
         // Fill center 32x32 with opaque pixels, leave borders transparent
         for y in 16..48 {
             for x in 16..48 {
-                img.put_pixel(x, y, image::Rgba([255, 0, 0, 255]));
+                img.put_pixel(x, y, Rgba([255, i as u8, 0, 255]));
             }
         }
         inputs.push(InputImage {
@@ -117,7 +121,8 @@ fn test_pack_stats_with_trimming() {
     assert_eq!(stats.num_trimmed, 2);
 
     // Used area should be less than 2 * 64 * 64 due to trimming
-    assert!(stats.used_frame_area < 2 * 64 * 64);
+    assert_eq!(stats.num_regions, 2);
+    assert!(stats.used_region_area < 2 * 64 * 64);
 }
 
 #[test]
@@ -180,13 +185,13 @@ fn test_pack_stats_wasted_area() {
         "Wasted: {}, Total: {}, Used: {}",
         wasted,
         stats.total_page_area,
-        stats.used_frame_area
+        stats.used_region_area
     );
     assert!(waste_pct > 0.0);
     assert!(waste_pct < 100.0);
 
     // Wasted + used should equal total
-    assert_eq!(wasted + stats.used_frame_area, stats.total_page_area);
+    assert_eq!(wasted + stats.used_region_area, stats.total_page_area);
 }
 
 #[test]
@@ -207,7 +212,7 @@ fn test_pack_stats_layout_only() {
 
     // Calculate expected used area
     let expected_used = 32 * 32 + 64 * 64 + 48 * 48;
-    assert_eq!(stats.used_frame_area, expected_used);
+    assert_eq!(stats.used_region_area, expected_used);
 
     assert!(stats.occupancy > 0.0);
     assert!(stats.occupancy <= 1.0);
@@ -229,7 +234,8 @@ fn test_pack_stats_multiple_pages() {
     // Create many textures to force multiple pages
     let mut inputs = Vec::new();
     for i in 0..20 {
-        let img = DynamicImage::ImageRgba8(RgbaImage::new(40, 40));
+        let img =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(40, 40, Rgba([i as u8, 0, 0, 255])));
         inputs.push(InputImage {
             key: format!("tex_{}", i),
             image: img,
@@ -282,8 +288,10 @@ fn test_pack_stats_empty_atlas() {
 
     assert_eq!(stats.num_pages, 0);
     assert_eq!(stats.num_frames, 0);
+    assert_eq!(stats.num_regions, 0);
+    assert_eq!(stats.num_deduplicated, 0);
     assert_eq!(stats.total_page_area, 0);
-    assert_eq!(stats.used_frame_area, 0);
+    assert_eq!(stats.used_region_area, 0);
     assert_eq!(stats.occupancy, 0.0);
     assert_eq!(stats.wasted_area(), 0);
 }

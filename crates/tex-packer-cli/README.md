@@ -61,7 +61,7 @@ Examples:
 - Plist export: `tex-packer pack assets/kenney-ui-pack --metadata plist --out out`
 - Layout-only (JSON-Hash): `tex-packer layout assets/generated --out-dir out_layout --name atlas_layout --metadata json-hash`
 - Layout-only (Plist): `tex-packer layout assets/generated/basic --out-dir out_layout --name basic_layout --metadata plist`
-- Stats: `--export-stats out/stats.json` writes `{ pages, used_area, total_area, occupancy }`
+- Stats: `--export-stats out/stats.json` writes `{ pages, frames, regions, deduplicated, used_area, total_area, occupancy }`
 - MaxRects reference split/prune: add `--mr-reference` (quality better on large sets; slower)
 - Print merged config and exit: `--print-config` (useful to inspect YAML+CLI result)
 - Include/Exclude: `--include "**/*.png" --exclude "**/ui/**"` (multiple allowed)

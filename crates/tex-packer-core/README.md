@@ -101,6 +101,18 @@ The offline APIs share one placement pipeline:
 - Sorting, page creation, remaining-item iteration, page sizing, atlas metadata, and Auto candidate selection all use the same placement path.
 - Image compositing is an adapter over the placed pages, not a separate packing algorithm.
 
+`pack_images` automatically deduplicates identical prepared pixel regions. A physical region is
+placed and composited once, while every logical input keeps its own frame key, trim rectangle, and
+source size. Dimensions participate in content identity, and hash matches are verified against the
+pixel bytes before regions are shared. Layout-only and runtime packing do not infer pixel identity.
+
+`PackStats` distinguishes logical frames from physical regions:
+
+- `num_frames`: logical metadata entries.
+- `num_regions`: unique physical atlas regions.
+- `num_deduplicated`: frames reusing a region.
+- `used_region_area`: area occupied by unique regions.
+
 Placement geometry is centralized inside the core crate. Algorithms choose reserved slots; the shared helper owns reserved-size calculation, padding/extrusion offsets, and reserved-slot-to-frame conversion. Runtime append/evict remains a separate online path, but reuses the same geometry helper where its semantics match offline placement.
 
 ## Runtime Usage

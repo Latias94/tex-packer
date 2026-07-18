@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use crate::config::RuntimeConfig;
 pub use crate::config::{RuntimeStrategy, ShelfPolicy};
 use crate::error::{Result, TexPackerError};
 use crate::geometry::PlacementGeometry;
 use crate::model::{Atlas, Frame, FrameId, Meta, PageId, Rect, Region, RegionId};
-use crate::runtime_placement::RuntimePage;
+use crate::runtime_placement::{PreparedPageAppend, RuntimePage};
 
 /// Owned logical and physical context returned by runtime placement operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,7 +114,47 @@ impl RuntimeStats {
 pub struct AtlasSession {
     pub(crate) cfg: RuntimeConfig,
     pages: Vec<RuntimePage>,
+    page_slots: HashMap<PageId, usize>,
+    key_index: HashMap<String, RuntimeHandle>,
     next_page_id: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RuntimeHandle {
+    page_id: PageId,
+    frame_id: FrameId,
+    region_id: RegionId,
+}
+
+enum PreparedAppendTarget {
+    Existing {
+        page_index: usize,
+        page_append: PreparedPageAppend,
+    },
+    New {
+        page: RuntimePage,
+        next_page_id: u32,
+        placement: RuntimePlacement,
+    },
+}
+
+pub(crate) struct PreparedAppend {
+    target: PreparedAppendTarget,
+    page_size: (u32, u32),
+    key: String,
+}
+
+impl PreparedAppend {
+    pub(crate) const fn placement(&self) -> &RuntimePlacement {
+        match &self.target {
+            PreparedAppendTarget::Existing { page_append, .. } => page_append.placement(),
+            PreparedAppendTarget::New { placement, .. } => placement,
+        }
+    }
+
+    pub(crate) const fn page_size(&self) -> (u32, u32) {
+        self.page_size
+    }
 }
 
 impl AtlasSession {
@@ -120,30 +162,21 @@ impl AtlasSession {
         Self {
             cfg,
             pages: Vec::new(),
+            page_slots: HashMap::new(),
+            key_index: HashMap::new(),
             next_page_id: 0,
         }
     }
 
-    fn new_page(&mut self) -> Result<RuntimePage> {
-        let id = PageId::new(self.next_page_id);
-        self.next_page_id =
-            self.next_page_id
-                .checked_add(1)
-                .ok_or_else(|| TexPackerError::InvariantViolation {
-                    context: "runtime atlas".into(),
-                    reason: format!("page identity space exhausted at {}", self.next_page_id),
-                })?;
-        let page = self.cfg.page_config();
-        Ok(RuntimePage::new(
-            id,
-            page.max_width(),
-            page.max_height(),
-            page,
-            self.cfg.strategy(),
-        ))
+    pub fn append(&mut self, key: String, w: u32, h: u32) -> Result<RuntimePlacement> {
+        let prepared = self.prepare_append(key, w, h)?;
+        Ok(self.commit_append(prepared))
     }
 
-    pub fn append(&mut self, key: String, w: u32, h: u32) -> Result<RuntimePlacement> {
+    pub(crate) fn prepare_append(&self, key: String, w: u32, h: u32) -> Result<PreparedAppend> {
+        if self.key_index.contains_key(&key) {
+            return Err(TexPackerError::DuplicateKey { key });
+        }
         if w == 0 || h == 0 {
             return Err(TexPackerError::InvalidDimensions {
                 width: w,
@@ -163,21 +196,47 @@ impl AtlasSession {
         };
         let source = Rect::new(0, 0, w, h);
 
-        for page in &mut self.pages {
-            let Some((allocation, rotated)) = page.choose(geometry.reserved_w, geometry.reserved_h)
-            else {
-                continue;
-            };
-            let physical = geometry.complete(allocation, rotated);
-            return page.place(key, physical, source);
+        for (page_index, page) in self.pages.iter().enumerate() {
+            if let Some(page_append) = page.prepare_append(&key, geometry, source)? {
+                return Ok(PreparedAppend {
+                    target: PreparedAppendTarget::Existing {
+                        page_index,
+                        page_append,
+                    },
+                    page_size: page.size(),
+                    key,
+                });
+            }
         }
 
-        let mut page = self.new_page()?;
-        if let Some((allocation, rotated)) = page.choose(geometry.reserved_w, geometry.reserved_h) {
-            let physical = geometry.complete(allocation, rotated);
-            let placement = page.place(key.clone(), physical, source)?;
-            self.pages.push(page);
-            return Ok(placement);
+        let page_id = PageId::new(self.next_page_id);
+        let next_page_id =
+            self.next_page_id
+                .checked_add(1)
+                .ok_or_else(|| TexPackerError::InvariantViolation {
+                    context: "runtime atlas".into(),
+                    reason: format!("page identity space exhausted at {}", self.next_page_id),
+                })?;
+        let page_config = self.cfg.page_config();
+        let mut page = RuntimePage::new(
+            page_id,
+            page_config.max_width(),
+            page_config.max_height(),
+            page_config,
+            self.cfg.strategy(),
+        );
+        let page_size = page.size();
+        if let Some(page_append) = page.prepare_append(&key, geometry, source)? {
+            let placement = page.commit_append(page_append);
+            return Ok(PreparedAppend {
+                target: PreparedAppendTarget::New {
+                    page,
+                    next_page_id,
+                    placement,
+                },
+                page_size,
+                key,
+            });
         }
 
         Err(TexPackerError::OutOfSpace {
@@ -188,12 +247,47 @@ impl AtlasSession {
         })
     }
 
+    pub(crate) fn commit_append(&mut self, prepared: PreparedAppend) -> RuntimePlacement {
+        let placement = match prepared.target {
+            PreparedAppendTarget::Existing {
+                page_index,
+                page_append,
+            } => self.pages[page_index].commit_append(page_append),
+            PreparedAppendTarget::New {
+                page,
+                next_page_id,
+                placement,
+            } => {
+                let page_id = page.id();
+                let page_slot = self.pages.len();
+                self.pages.push(page);
+                let replaced_slot = self.page_slots.insert(page_id, page_slot);
+                debug_assert!(replaced_slot.is_none(), "new page identity must be unique");
+                self.next_page_id = next_page_id;
+                placement
+            }
+        };
+        let handle = RuntimeHandle {
+            page_id: placement.page_id(),
+            frame_id: placement.frame_id(),
+            region_id: placement.region_id(),
+        };
+        let replaced_handle = self.key_index.insert(prepared.key, handle);
+        debug_assert!(
+            replaced_handle.is_none(),
+            "prepared runtime key must remain unique"
+        );
+        placement
+    }
+
     pub fn evict(&mut self, page_id: PageId, key: &str) -> bool {
-        self.pages
-            .iter_mut()
-            .find(|page| page.id() == page_id)
-            .and_then(|page| page.evict(key))
-            .is_some()
+        let Some(handle) = self.key_index.get(key).copied() else {
+            return false;
+        };
+        if handle.page_id != page_id {
+            return false;
+        }
+        self.evict_handle(key, handle)
     }
 
     pub fn snapshot_atlas(&self) -> Result<Atlas> {
@@ -210,7 +304,11 @@ impl AtlasSession {
 
     /// Finds the resolved runtime placement for a key.
     pub fn get_frame(&self, key: &str) -> Option<RuntimePlacement> {
-        self.pages.iter().find_map(|page| page.placement(key))
+        let handle = self.key_index.get(key)?;
+        let page_slot = *self.page_slots.get(&handle.page_id)?;
+        self.pages
+            .get(page_slot)?
+            .placement(handle.frame_id, handle.region_id)
     }
 
     /// Finds the physical allocation reserved for a key.
@@ -221,18 +319,20 @@ impl AtlasSession {
 
     /// Evicts a texture by key without requiring its page identity.
     pub fn evict_by_key(&mut self, key: &str) -> bool {
-        self.pages
-            .iter_mut()
-            .find_map(|page| page.evict(key))
-            .is_some()
+        let Some(handle) = self.key_index.get(key).copied() else {
+            return false;
+        };
+        self.evict_handle(key, handle)
     }
 
     pub fn contains(&self, key: &str) -> bool {
-        self.pages.iter().any(|page| page.contains(key))
+        self.key_index.contains_key(key)
     }
 
     pub fn keys(&self) -> Vec<&str> {
-        self.pages.iter().flat_map(RuntimePage::keys).collect()
+        let mut entries: Vec<_> = self.key_index.iter().collect();
+        entries.sort_unstable_by_key(|(_, handle)| (handle.page_id, handle.frame_id));
+        entries.into_iter().map(|(key, _)| key.as_str()).collect()
     }
 
     pub fn texture_count(&self) -> usize {
@@ -242,7 +342,7 @@ impl AtlasSession {
     pub fn stats(&self) -> RuntimeStats {
         let num_pages = self.pages.len();
         let num_frames = self.texture_count();
-        let num_regions = num_frames;
+        let num_regions = self.pages.iter().map(RuntimePage::region_count).sum();
         let page_area = self
             .pages
             .iter()
@@ -279,11 +379,19 @@ impl AtlasSession {
         }
     }
 
-    pub(crate) fn page_size(&self, page_id: PageId) -> Option<(u32, u32)> {
-        self.pages
-            .iter()
-            .find(|page| page.id() == page_id)
-            .map(RuntimePage::size)
+    fn evict_handle(&mut self, key: &str, handle: RuntimeHandle) -> bool {
+        let Some(&page_slot) = self.page_slots.get(&handle.page_id) else {
+            return false;
+        };
+        let Some(page) = self.pages.get_mut(page_slot) else {
+            return false;
+        };
+        if page.evict(handle.frame_id, handle.region_id).is_none() {
+            return false;
+        }
+        let removed = self.key_index.remove(key);
+        debug_assert_eq!(removed, Some(handle));
+        true
     }
 }
 

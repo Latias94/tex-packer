@@ -1,4 +1,5 @@
 use tex_packer_core::PageId;
+use tex_packer_core::TexPackerError;
 use tex_packer_core::prelude::*;
 
 fn runtime_config(width: u32, height: u32, strategy: RuntimeStrategy) -> RuntimeConfig {
@@ -25,7 +26,6 @@ fn guillotine_config(width: u32, height: u32) -> RuntimeConfig {
 }
 
 #[test]
-#[ignore = "U5: rejected oversized appends must not consume runtime page identifiers"]
 fn rejected_oversized_append_does_not_consume_page_id() {
     let mut sess = AtlasSession::new(guillotine_config(64, 64));
 
@@ -40,7 +40,6 @@ fn rejected_oversized_append_does_not_consume_page_id() {
 }
 
 #[test]
-#[ignore = "U5: rejected zero-sized appends must not consume runtime page identifiers"]
 fn rejected_zero_sized_append_does_not_consume_page_id() {
     let mut sess = AtlasSession::new(guillotine_config(64, 64));
 
@@ -55,7 +54,6 @@ fn rejected_zero_sized_append_does_not_consume_page_id() {
 }
 
 #[test]
-#[ignore = "U5: duplicate runtime keys must not leak allocations or change statistics"]
 fn duplicate_key_append_preserves_placement_and_stats() {
     let mut sess = AtlasSession::new(guillotine_config(64, 64));
 
@@ -64,7 +62,11 @@ fn duplicate_key_append_preserves_placement_and_stats() {
         .expect("initial append");
     let stats_before = sess.stats();
 
-    let _duplicate_result = sess.append("duplicate".into(), 16, 16);
+    let duplicate_result = sess.append("duplicate".into(), 16, 16);
+    assert!(matches!(
+        duplicate_result,
+        Err(TexPackerError::DuplicateKey { ref key }) if key == "duplicate"
+    ));
     assert_runtime_stats_eq(&sess.stats(), &stats_before);
 
     let current = sess

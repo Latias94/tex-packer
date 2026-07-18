@@ -2,6 +2,7 @@ use crate::config::ShelfPolicy;
 use crate::geometry::{bottom_ex_u32, right_ex_u32, span_end_ex};
 use crate::model::Rect;
 
+#[derive(Clone)]
 pub(super) struct RuntimeShelfPlacement {
     border: Rect,
     policy: ShelfPolicy,

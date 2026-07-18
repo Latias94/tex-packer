@@ -2,6 +2,7 @@ use crate::config::SkylineHeuristic;
 use crate::geometry::{bottom_ex_u32, contains_rect, right_ex_u32, span_end_ex};
 use crate::model::Rect;
 
+#[derive(Clone)]
 pub(super) struct RuntimeSkyline {
     border: Rect,
     heuristic: SkylineHeuristic,

@@ -9,27 +9,36 @@ use self::shelf::RuntimeShelfPlacement;
 use self::skyline::RuntimeSkyline;
 use crate::config::{PageConfig, RuntimeStrategy};
 use crate::error::{Result, TexPackerError};
-use crate::geometry::{PhysicalPlacement, usable_area};
+use crate::geometry::{PlacementGeometry, usable_area};
 use crate::model::{Frame, FrameId, Page, PageId, Rect, Region, RegionId};
 use crate::runtime::RuntimePlacement;
-
-#[derive(Debug, Clone)]
-struct RuntimeEntry {
-    region: Region,
-    frame: Frame,
-}
 
 pub(crate) struct RuntimePage {
     id: PageId,
     width: u32,
     height: u32,
-    used: HashMap<String, RuntimeEntry>,
+    regions: HashMap<RegionId, Region>,
+    frames: HashMap<FrameId, Frame>,
     next_region_id: u32,
     next_frame_id: u32,
     allow_rotation: bool,
     allocator: RuntimeAllocator,
 }
 
+pub(crate) struct PreparedPageAppend {
+    allocator: RuntimeAllocator,
+    placement: RuntimePlacement,
+    next_region_id: u32,
+    next_frame_id: u32,
+}
+
+impl PreparedPageAppend {
+    pub(crate) const fn placement(&self) -> &RuntimePlacement {
+        &self.placement
+    }
+}
+
+#[derive(Clone)]
 enum RuntimeAllocator {
     Guillotine(RuntimeGuillotine),
     Shelf(RuntimeShelfPlacement),
@@ -104,7 +113,8 @@ impl RuntimePage {
             id,
             width,
             height,
-            used: HashMap::new(),
+            regions: HashMap::new(),
+            frames: HashMap::new(),
             next_region_id: 0,
             next_frame_id: 0,
             allow_rotation: page_config.allow_rotation(),
@@ -120,16 +130,20 @@ impl RuntimePage {
         (self.width, self.height)
     }
 
-    pub(crate) fn choose(&self, w: u32, h: u32) -> Option<(Rect, bool)> {
-        self.allocator.choose(self.allow_rotation, w, h)
-    }
-
-    pub(crate) fn place(
-        &mut self,
-        key: String,
-        physical: PhysicalPlacement,
+    pub(crate) fn prepare_append(
+        &self,
+        key: &str,
+        geometry: PlacementGeometry,
         source: Rect,
-    ) -> Result<RuntimePlacement> {
+    ) -> Result<Option<PreparedPageAppend>> {
+        let Some((allocation, rotated)) = self.allocator.choose(
+            self.allow_rotation,
+            geometry.reserved_w,
+            geometry.reserved_h,
+        ) else {
+            return Ok(None);
+        };
+        let physical = geometry.complete(allocation, rotated);
         let next_region_id = self
             .next_region_id
             .checked_add(1)
@@ -147,73 +161,115 @@ impl RuntimePage {
         );
         let frame = Frame::new(
             FrameId::new(self.next_frame_id),
-            key.clone(),
+            key.to_owned(),
             region.id(),
             false,
             source,
             (source.w, source.h),
         );
 
-        self.allocator.place(&physical.allocation);
-        self.next_region_id = next_region_id;
-        self.next_frame_id = next_frame_id;
-        self.used.insert(
-            key,
-            RuntimeEntry {
-                region: region.clone(),
-                frame: frame.clone(),
-            },
-        );
+        let page_bounds = Rect::new(0, 0, self.width, self.height);
+        if !physical.allocation.contains(&physical.content)
+            || !page_bounds.contains(&physical.allocation)
+            || self
+                .regions
+                .values()
+                .any(|region| region.allocation().intersects(&physical.allocation))
+        {
+            return Err(TexPackerError::InvariantViolation {
+                context: format!("runtime page {}", self.id),
+                reason: format!("placement for key '{key}' violates page geometry invariants"),
+            });
+        }
 
-        Ok(RuntimePlacement::new(self.id, frame, region))
+        let mut allocator = self.allocator.clone();
+        allocator.place(&physical.allocation);
+        Ok(Some(PreparedPageAppend {
+            allocator,
+            placement: RuntimePlacement::new(self.id, frame, region),
+            next_region_id,
+            next_frame_id,
+        }))
     }
 
-    pub(crate) fn evict(&mut self, key: &str) -> Option<Rect> {
-        let entry = self.used.remove(key)?;
-        let allocation = entry.region.allocation();
+    pub(crate) fn commit_append(&mut self, prepared: PreparedPageAppend) -> RuntimePlacement {
+        let PreparedPageAppend {
+            allocator,
+            placement,
+            next_region_id,
+            next_frame_id,
+        } = prepared;
+        self.allocator = allocator;
+        self.next_region_id = next_region_id;
+        self.next_frame_id = next_frame_id;
+        let replaced_region = self
+            .regions
+            .insert(placement.region_id(), placement.region().clone());
+        let replaced_frame = self
+            .frames
+            .insert(placement.frame_id(), placement.frame().clone());
+        debug_assert!(
+            replaced_region.is_none() && replaced_frame.is_none(),
+            "prepared runtime identities must remain unique"
+        );
+        placement
+    }
+
+    pub(crate) fn evict(&mut self, frame_id: FrameId, region_id: RegionId) -> Option<Rect> {
+        let frame = self.frames.get(&frame_id)?;
+        if frame.region_id() != region_id {
+            return None;
+        }
+        let allocation = self.regions.get(&region_id)?.allocation();
+        self.frames.remove(&frame_id);
+        self.regions.remove(&region_id);
         self.allocator.add_free(allocation);
         Some(allocation)
     }
 
-    pub(crate) fn placement(&self, key: &str) -> Option<RuntimePlacement> {
-        let entry = self.used.get(key)?;
+    pub(crate) fn placement(
+        &self,
+        frame_id: FrameId,
+        region_id: RegionId,
+    ) -> Option<RuntimePlacement> {
+        let frame = self.frames.get(&frame_id)?;
+        if frame.region_id() != region_id {
+            return None;
+        }
+        let region = self.regions.get(&region_id)?;
         Some(RuntimePlacement::new(
             self.id,
-            entry.frame.clone(),
-            entry.region.clone(),
+            frame.clone(),
+            region.clone(),
         ))
     }
 
-    pub(crate) fn contains(&self, key: &str) -> bool {
-        self.used.contains_key(key)
-    }
-
-    pub(crate) fn keys(&self) -> impl Iterator<Item = &str> {
-        self.used.keys().map(String::as_str)
-    }
-
     pub(crate) fn len(&self) -> usize {
-        self.used.len()
+        self.frames.len()
+    }
+
+    pub(crate) fn region_count(&self) -> usize {
+        self.regions.len()
     }
 
     pub(crate) fn content_area(&self) -> u128 {
-        self.used
+        self.regions
             .values()
-            .map(|entry| entry.region.content().area())
+            .map(|region| region.content().area())
             .sum()
     }
 
     pub(crate) fn allocation_area(&self) -> u128 {
-        self.used
+        self.regions
             .values()
-            .map(|entry| entry.region.allocation().area())
+            .map(|region| region.allocation().area())
             .sum()
     }
 
     pub(crate) fn rotated_regions(&self) -> usize {
-        self.used
+        self.regions
             .values()
-            .filter(|entry| entry.region.rotated())
+            .filter(|region| region.rotated())
             .count()
     }
 
@@ -222,16 +278,8 @@ impl RuntimePage {
     }
 
     pub(crate) fn snapshot(&self) -> Result<Page> {
-        let mut regions: Vec<_> = self
-            .used
-            .values()
-            .map(|entry| entry.region.clone())
-            .collect();
-        let mut frames: Vec<_> = self
-            .used
-            .values()
-            .map(|entry| entry.frame.clone())
-            .collect();
+        let mut regions: Vec<_> = self.regions.values().cloned().collect();
+        let mut frames: Vec<_> = self.frames.values().cloned().collect();
         regions.sort_unstable_by_key(Region::id);
         frames.sort_unstable_by_key(Frame::id);
         Page::try_new(self.id, self.width, self.height, regions, frames)

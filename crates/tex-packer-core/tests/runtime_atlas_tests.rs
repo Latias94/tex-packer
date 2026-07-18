@@ -14,7 +14,6 @@ fn guillotine_config(page: PageConfigBuilder) -> RuntimeConfig {
 }
 
 #[test]
-#[ignore = "U5: failed image appends must not retain geometry or pixel pages"]
 fn rejected_image_append_leaves_runtime_atlas_empty() {
     let cfg = guillotine_config(PageConfig::builder().max_dimensions(64, 64));
     let mut atlas = RuntimeAtlas::new(cfg);

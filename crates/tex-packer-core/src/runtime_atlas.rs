@@ -3,7 +3,7 @@ use image::{Rgba, RgbaImage};
 use crate::config::RuntimeConfig;
 use crate::error::{Result, TexPackerError};
 use crate::model::{Atlas, PageId, Rect};
-use crate::runtime::{AtlasSession, RuntimePlacement, RuntimeStats};
+use crate::runtime::{AtlasSession, PreparedAppend, RuntimePlacement, RuntimeStats};
 
 /// Region that needs to be updated on a GPU texture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +57,15 @@ struct RuntimeImagePage {
     image: RgbaImage,
 }
 
+enum PreparedPixels {
+    Patch {
+        page_index: usize,
+        region: UpdateRegion,
+        pixels: RgbaImage,
+    },
+    New(RuntimeImagePage),
+}
+
 /// Runtime atlas with pixel data management.
 pub struct RuntimeAtlas {
     session: AtlasSession,
@@ -91,9 +100,9 @@ impl RuntimeAtlas {
         image: &RgbaImage,
     ) -> Result<RuntimeImageUpdate> {
         let (width, height) = image.dimensions();
-        let placement = self.session.append(key, width, height)?;
-        self.ensure_page(placement.page_id())?;
-        let dirty_region = self.blit_to_page(&placement, image)?;
+        let prepared_append = self.session.prepare_append(key, width, height)?;
+        let (prepared_pixels, dirty_region) = self.prepare_pixels(&prepared_append, image)?;
+        let placement = self.commit_image_append(prepared_append, prepared_pixels);
 
         Ok(RuntimeImageUpdate {
             placement,
@@ -184,72 +193,105 @@ impl RuntimeAtlas {
         self.session.snapshot_atlas()
     }
 
-    fn ensure_page(&mut self, page_id: PageId) -> Result<()> {
-        if self.pages.iter().any(|page| page.id == page_id) {
-            return Ok(());
-        }
+    fn prepare_pixels(
+        &self,
+        prepared_append: &PreparedAppend,
+        image: &RgbaImage,
+    ) -> Result<(PreparedPixels, UpdateRegion)> {
+        let placement = prepared_append.placement();
+        let page_id = placement.page_id();
+        let extrusion = self.session.cfg.page_config().texture_extrusion();
+        let page_size = prepared_append.page_size();
+        let dirty_region = validate_blit(placement, image, page_size, extrusion)?;
 
-        let (width, height) =
-            self.session
-                .page_size(page_id)
-                .ok_or_else(|| TexPackerError::InvariantViolation {
+        if let Some((page_index, page)) = self
+            .pages
+            .iter()
+            .enumerate()
+            .find(|(_, page)| page.id == page_id)
+        {
+            if page.image.dimensions() != page_size {
+                return Err(TexPackerError::InvariantViolation {
                     context: format!("runtime image page {page_id}"),
-                    reason: "geometry page is missing".into(),
-                })?;
-        self.pages.push(RuntimeImagePage {
-            id: page_id,
-            image: RgbaImage::from_pixel(width, height, self.background_color),
-        });
-        Ok(())
+                    reason: format!(
+                        "pixel buffer dimensions {:?} do not match geometry page {:?}",
+                        page.image.dimensions(),
+                        page_size
+                    ),
+                });
+            }
+
+            let mut pixels = RgbaImage::from_pixel(
+                dirty_region.width,
+                dirty_region.height,
+                self.background_color,
+            );
+            let content = placement.content();
+            blit_staged(
+                image,
+                &mut pixels,
+                Rect::new(
+                    content.x - dirty_region.x,
+                    content.y - dirty_region.y,
+                    content.w,
+                    content.h,
+                ),
+                placement.rotated(),
+                extrusion,
+                self.outlines,
+            );
+            Ok((
+                PreparedPixels::Patch {
+                    page_index,
+                    region: dirty_region,
+                    pixels,
+                },
+                dirty_region,
+            ))
+        } else {
+            let mut pixels = RgbaImage::from_pixel(page_size.0, page_size.1, self.background_color);
+            blit_staged(
+                image,
+                &mut pixels,
+                placement.content(),
+                placement.rotated(),
+                extrusion,
+                self.outlines,
+            );
+            Ok((
+                PreparedPixels::New(RuntimeImagePage {
+                    id: page_id,
+                    image: pixels,
+                }),
+                dirty_region,
+            ))
+        }
     }
 
-    fn blit_to_page(
+    fn commit_pixels(&mut self, prepared: PreparedPixels) {
+        match prepared {
+            PreparedPixels::Patch {
+                page_index,
+                region,
+                pixels,
+            } => {
+                let page = &mut self.pages[page_index].image;
+                for (x, y, pixel) in pixels.enumerate_pixels() {
+                    page.put_pixel(region.x + x, region.y + y, *pixel);
+                }
+            }
+            PreparedPixels::New(page) => self.pages.push(page),
+        }
+    }
+
+    fn commit_image_append(
         &mut self,
-        placement: &RuntimePlacement,
-        image: &RgbaImage,
-    ) -> Result<UpdateRegion> {
-        let page_id = placement.page_id();
-        let page = self
-            .pages
-            .iter_mut()
-            .find(|page| page.id == page_id)
-            .map(|page| &mut page.image)
-            .ok_or_else(|| TexPackerError::InvariantViolation {
-                context: format!("runtime image page {page_id}"),
-                reason: "pixel buffer is missing".into(),
-            })?;
-
-        let content = placement.content();
-        let (source_width, source_height) = image.dimensions();
-        let extrusion = self.session.cfg.page_config().texture_extrusion();
-        let destination =
-            crate::compositing::BlitRect::new(content.x, content.y, content.w, content.h);
-        let source = crate::compositing::BlitRect::new(0, 0, source_width, source_height);
-        let options = crate::compositing::BlitOptions {
-            rotated: placement.rotated(),
-            extrude: extrusion,
-            outlines: self.outlines,
-        };
-        crate::compositing::blit_rgba(image, page, destination, source, options);
-
-        let start_x = content.x.saturating_sub(extrusion);
-        let start_y = content.y.saturating_sub(extrusion);
-        let width = content
-            .w
-            .saturating_add(extrusion.saturating_mul(2))
-            .min(page.width().saturating_sub(start_x));
-        let height = content
-            .h
-            .saturating_add(extrusion.saturating_mul(2))
-            .min(page.height().saturating_sub(start_y));
-
-        Ok(UpdateRegion {
-            page_id,
-            x: start_x,
-            y: start_y,
-            width,
-            height,
-        })
+        prepared_append: PreparedAppend,
+        prepared_pixels: PreparedPixels,
+    ) -> RuntimePlacement {
+        let placement = self.session.commit_append(prepared_append);
+        self.commit_pixels(prepared_pixels);
+        placement
     }
 
     fn clear_region(&mut self, region: UpdateRegion) {
@@ -267,6 +309,98 @@ impl RuntimeAtlas {
                 page.put_pixel(x, y, self.background_color);
             }
         }
+    }
+}
+
+fn validate_blit(
+    placement: &RuntimePlacement,
+    image: &RgbaImage,
+    page_size: (u32, u32),
+    extrusion: u32,
+) -> Result<UpdateRegion> {
+    let page_id = placement.page_id();
+    let content = placement.content();
+    let source_size = image.dimensions();
+    let expected_content_size = if placement.rotated() {
+        (source_size.1, source_size.0)
+    } else {
+        source_size
+    };
+    if content.is_empty() || (content.w, content.h) != expected_content_size {
+        return Err(blit_invariant(
+            page_id,
+            format!(
+                "content dimensions {:?} do not match source {:?} with rotated={}",
+                (content.w, content.h),
+                source_size,
+                placement.rotated()
+            ),
+        ));
+    }
+
+    let Some(start_x) = content.x.checked_sub(extrusion) else {
+        return Err(blit_invariant(page_id, "extrusion crosses the left edge"));
+    };
+    let Some(start_y) = content.y.checked_sub(extrusion) else {
+        return Err(blit_invariant(page_id, "extrusion crosses the top edge"));
+    };
+    let end_x = u64::from(content.x) + u64::from(content.w) + u64::from(extrusion);
+    let end_y = u64::from(content.y) + u64::from(content.h) + u64::from(extrusion);
+    if end_x > u64::from(page_size.0) || end_y > u64::from(page_size.1) {
+        return Err(blit_invariant(
+            page_id,
+            format!(
+                "destination including extrusion exceeds page dimensions {:?}",
+                page_size
+            ),
+        ));
+    }
+
+    let region = UpdateRegion {
+        page_id,
+        x: start_x,
+        y: start_y,
+        width: u32::try_from(end_x - u64::from(start_x))
+            .map_err(|_| blit_invariant(page_id, "dirty width exceeds u32"))?,
+        height: u32::try_from(end_y - u64::from(start_y))
+            .map_err(|_| blit_invariant(page_id, "dirty height exceeds u32"))?,
+    };
+    let dirty_rect = Rect::new(region.x, region.y, region.width, region.height);
+    if !placement.allocation().contains(&dirty_rect) {
+        return Err(blit_invariant(
+            page_id,
+            "dirty rectangle must lie inside the reserved allocation",
+        ));
+    }
+    Ok(region)
+}
+
+fn blit_staged(
+    image: &RgbaImage,
+    pixels: &mut RgbaImage,
+    content: Rect,
+    rotated: bool,
+    extrusion: u32,
+    outlines: bool,
+) {
+    let (source_width, source_height) = image.dimensions();
+    crate::compositing::blit_rgba(
+        image,
+        pixels,
+        crate::compositing::BlitRect::new(content.x, content.y, content.w, content.h),
+        crate::compositing::BlitRect::new(0, 0, source_width, source_height),
+        crate::compositing::BlitOptions {
+            rotated,
+            extrude: extrusion,
+            outlines,
+        },
+    );
+}
+
+fn blit_invariant(page_id: PageId, reason: impl Into<String>) -> TexPackerError {
+    TexPackerError::InvariantViolation {
+        context: format!("runtime image page {page_id}"),
+        reason: reason.into(),
     }
 }
 

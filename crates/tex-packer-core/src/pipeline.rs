@@ -7,42 +7,17 @@ use crate::geometry::{ContentSize, PhysicalPlacement, bottom_ex_u32, right_ex_u3
 use crate::model::{Atlas, Frame, FrameId, Meta, Page, PageId, Rect, Region, RegionId};
 use crate::packer::PlacementEngine;
 use crate::packing_plan::PackingPlan;
-use crate::preparation::{PreparedItem, prepare_images, prepare_layout, prepare_layout_items};
-use image::{DynamicImage, RgbaImage};
+use crate::preparation::{PreparedItem, prepare_images, prepare_layout_items};
+use image::RgbaImage;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tracing::instrument;
 
+pub use crate::offline::{InputImage, LayoutItem, OutputPage, PackOutput, RenderedPage};
 pub use crate::preparation::compute_trim_rect;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-
-/// In-memory image to pack (key + decoded image).
-pub struct InputImage {
-    pub key: String,
-    pub image: DynamicImage,
-}
-
-/// Output RGBA page and its logical page record.
-pub struct OutputPage {
-    pub page: Page,
-    pub rgba: RgbaImage,
-}
-
-/// Output of a packing run: atlas metadata and RGBA pages.
-pub struct PackOutput {
-    pub atlas: Atlas,
-    pub pages: Vec<OutputPage>,
-}
-
-impl PackOutput {
-    /// Computes packing statistics for this output.
-    /// This is a convenience method that delegates to `atlas.stats()`.
-    pub fn stats(&self) -> crate::model::PackStats {
-        self.atlas.stats()
-    }
-}
 
 #[instrument(skip_all)]
 /// Packs `inputs` into atlas pages using configuration `cfg` and returns metadata and RGBA pages.
@@ -52,13 +27,45 @@ impl PackOutput {
 /// - When the strategy is `Auto`, a small portfolio is tried and the best result is chosen (pages first, then total area).
 /// - The time budget can limit Auto evaluation; parallel execution is used when enabled and available.
 pub fn pack_images(inputs: Vec<InputImage>, config: OfflineConfig) -> Result<PackOutput> {
+    crate::offline::OfflinePacker::new(config).pack_images(inputs)
+}
+
+pub(crate) fn pack_images_impl(
+    inputs: Vec<InputImage>,
+    config: &OfflineConfig,
+) -> Result<PackOutput> {
     if inputs.is_empty() {
         return Err(TexPackerError::Empty);
     }
 
-    let prepared = prepare_images(&inputs, &config);
+    let input_keys = input_keys(&inputs);
+    let prepared = prepare_images(inputs, config)?;
+    reject_empty_prepared(&prepared, input_keys)?;
 
-    pack_prepared(&prepared, &config)
+    OfflinePipeline::new(config).pack_images(&prepared)
+}
+
+pub(crate) fn layout_images_impl(inputs: Vec<InputImage>, config: &OfflineConfig) -> Result<Atlas> {
+    if inputs.is_empty() {
+        return Err(TexPackerError::Empty);
+    }
+
+    let input_keys = input_keys(&inputs);
+    let prepared = prepare_images(inputs, config)?;
+    reject_empty_prepared(&prepared, input_keys)?;
+
+    OfflinePipeline::new(config).layout_images(&prepared)
+}
+
+fn input_keys(inputs: &[InputImage]) -> Vec<String> {
+    inputs.iter().map(|input| input.key.clone()).collect()
+}
+
+fn reject_empty_prepared<T>(prepared: &[PreparedItem<T>], keys: Vec<String>) -> Result<()> {
+    if prepared.is_empty() {
+        return Err(TexPackerError::NoPackableInputs { keys });
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -266,9 +273,22 @@ impl<'a> OfflinePipeline<'a> {
     }
 
     fn pack_images(&self, prepared: &[PreparedItem<RgbaImage>]) -> Result<PackOutput> {
+        let (atlas, packed_pages) = self.pack_decoded_images(prepared)?;
+        self.render_output(prepared, atlas, &packed_pages)
+    }
+
+    fn layout_images(&self, prepared: &[PreparedItem<RgbaImage>]) -> Result<Atlas> {
+        self.pack_decoded_images(prepared).map(|(atlas, _)| atlas)
+    }
+
+    fn pack_decoded_images(
+        &self,
+        prepared: &[PreparedItem<RgbaImage>],
+    ) -> Result<(Atlas, Vec<PackedPage>)> {
         let plan = PackingPlan::deduplicated(prepared);
         let packed_pages = self.pack_pages(prepared, &plan)?;
-        self.build_output(prepared, &packed_pages)
+        let atlas = self.build_atlas(prepared, &packed_pages)?;
+        Ok((atlas, packed_pages))
     }
 
     fn pack_layout<T: Sync>(&self, prepared: &[PreparedItem<T>]) -> Result<Atlas> {
@@ -310,22 +330,28 @@ impl<'a> OfflinePipeline<'a> {
         )
     }
 
-    fn build_output(
+    fn render_output(
         &self,
         prepared: &[PreparedItem<RgbaImage>],
+        atlas: Atlas,
         packed_pages: &[PackedPage],
     ) -> Result<PackOutput> {
-        let atlas = self.build_atlas(prepared, packed_pages)?;
         let pages = packed_pages
             .iter()
             .map(|packed_page| {
-                let page = atlas.page(packed_page.id).cloned().ok_or_else(|| {
+                let page = atlas.page(packed_page.id).ok_or_else(|| {
                     TexPackerError::InvariantViolation {
                         context: format!("page {}", packed_page.id),
                         reason: "rendered page does not resolve in the validated atlas".into(),
                     }
                 })?;
-                Ok(render_output_page(prepared, packed_page, self.config, page))
+                if page.size() != (packed_page.width, packed_page.height) {
+                    return Err(TexPackerError::InvariantViolation {
+                        context: format!("page {}", packed_page.id),
+                        reason: "rendered page dimensions differ from the validated atlas".into(),
+                    });
+                }
+                Ok(render_output_page(prepared, packed_page, self.config))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -339,13 +365,6 @@ impl<'a> OfflinePipeline<'a> {
     ) -> Result<Atlas> {
         build_atlas(prepared, packed_pages, self.config)
     }
-}
-
-fn pack_prepared(
-    prepared: &[PreparedItem<RgbaImage>],
-    config: &OfflineConfig,
-) -> Result<PackOutput> {
-    OfflinePipeline::new(config).pack_images(prepared)
 }
 
 fn pack_pages_for_strategy<T>(
@@ -432,8 +451,7 @@ fn render_output_page(
     prepared: &[PreparedItem<RgbaImage>],
     packed_page: &PackedPage,
     config: &OfflineConfig,
-    page: Page,
-) -> OutputPage {
+) -> RenderedPage {
     let page_config = config.page_config();
     let mut canvas = RgbaImage::new(packed_page.width, packed_page.height);
     for region in &packed_page.regions {
@@ -458,7 +476,10 @@ fn render_output_page(
         crate::compositing::blit_rgba(&prep.payload, &mut canvas, dst, src, options);
     }
 
-    OutputPage { page, rgba: canvas }
+    RenderedPage {
+        page_id: packed_page.id,
+        rgba: canvas,
+    }
 }
 
 fn build_atlas<T>(
@@ -614,34 +635,30 @@ pub fn pack_layout<K: Into<String>>(
     inputs: Vec<(K, u32, u32)>,
     config: OfflineConfig,
 ) -> Result<Atlas> {
-    if inputs.is_empty() {
-        return Err(TexPackerError::Empty);
-    }
-    let prepared = prepare_layout(inputs, &config);
-
-    OfflinePipeline::new(&config).pack_layout(&prepared)
-}
-
-/// Layout-only item with optional source/source_size to propagate trimming metadata.
-#[derive(Debug, Clone)]
-pub struct LayoutItem<K = String> {
-    pub key: K,
-    pub w: u32,
-    pub h: u32,
-    pub source: Option<Rect>,
-    pub source_size: Option<(u32, u32)>,
-    pub trimmed: bool,
+    let items = inputs
+        .into_iter()
+        .map(|(key, w, h)| LayoutItem {
+            key: key.into(),
+            w,
+            h,
+            source: None,
+            source_size: None,
+            trimmed: false,
+        })
+        .collect();
+    crate::offline::OfflinePacker::new(config).pack_layout(items)
 }
 
 /// Packs layout-only items (with optional source/source_size metadata) into pages.
-pub fn pack_layout_items<K: Into<String>>(
-    items: Vec<LayoutItem<K>>,
-    config: OfflineConfig,
-) -> Result<Atlas> {
+pub fn pack_layout_items(items: Vec<LayoutItem>, config: OfflineConfig) -> Result<Atlas> {
+    crate::offline::OfflinePacker::new(config).pack_layout(items)
+}
+
+pub(crate) fn pack_layout_impl(items: Vec<LayoutItem>, config: &OfflineConfig) -> Result<Atlas> {
     if items.is_empty() {
         return Err(TexPackerError::Empty);
     }
-    let prepared = prepare_layout_items(items, &config);
+    let prepared = prepare_layout_items(items, config)?;
 
-    OfflinePipeline::new(&config).pack_layout(&prepared)
+    OfflinePipeline::new(config).pack_layout(&prepared)
 }

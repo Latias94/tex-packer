@@ -136,6 +136,44 @@ fn duplicate_keys_keep_distinct_logical_identities() {
 }
 
 #[test]
+fn duplicate_keys_with_distinct_pixels_render_by_frame_identity() {
+    let cfg = config_builder(16, 16)
+        .sort_order(SortOrder::None)
+        .build()
+        .expect("valid offline config");
+    let output = pack_images(
+        vec![
+            input("duplicate", solid(2, 2, [255, 0, 0, 255])),
+            input("duplicate", solid(2, 2, [0, 0, 255, 255])),
+        ],
+        cfg,
+    )
+    .expect("pack duplicate keys with distinct pixels");
+
+    let page = &output.atlas.pages()[0];
+    let resolved = page.resolved_frames().collect::<Vec<_>>();
+    assert_eq!(resolved.len(), 2);
+    assert_ne!(resolved[0].frame().id(), resolved[1].frame().id());
+    assert_ne!(resolved[0].region().id(), resolved[1].region().id());
+
+    let rendered = output
+        .pages
+        .iter()
+        .find(|rendered| rendered.page_id == page.id())
+        .expect("rendered page");
+    let first = resolved[0].region().content();
+    let second = resolved[1].region().content();
+    assert_eq!(
+        rendered.rgba.get_pixel(first.x, first.y),
+        &Rgba([255, 0, 0, 255])
+    );
+    assert_eq!(
+        rendered.rgba.get_pixel(second.x, second.y),
+        &Rgba([0, 0, 255, 255])
+    );
+}
+
+#[test]
 fn matching_bytes_with_different_dimensions_are_distinct_regions() {
     let pixels = vec![1, 2, 3, 255, 5, 6, 7, 255];
     let vertical = RgbaImage::from_raw(1, 2, pixels.clone()).expect("vertical image");
@@ -224,7 +262,7 @@ fn duplicate_region_on_later_page_is_placed_once_without_panicking() {
     let page = output
         .pages
         .iter()
-        .find(|page| page.page.id() == first.page_id())
+        .find(|page| page.page_id == first.page_id())
         .expect("rendered page for alias");
     let content = first.region().content();
     assert_eq!(

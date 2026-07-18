@@ -1,6 +1,7 @@
 use crate::config::{OfflineConfig, SortOrder, TransparentPolicy};
+use crate::error::{Result, TexPackerError};
 use crate::model::Rect;
-use crate::pipeline::{InputImage, LayoutItem};
+use crate::offline::{InputImage, LayoutItem};
 use image::RgbaImage;
 
 #[derive(Debug, Clone, Copy)]
@@ -42,19 +43,21 @@ pub(crate) struct PreparedItem<T> {
 }
 
 pub(crate) fn prepare_images(
-    inputs: &[InputImage],
+    inputs: Vec<InputImage>,
     config: &OfflineConfig,
-) -> Vec<PreparedItem<RgbaImage>> {
+) -> Result<Vec<PreparedItem<RgbaImage>>> {
     let preparation = ImagePreparation::from(config);
     let mut out = Vec::with_capacity(inputs.len());
     for input in inputs {
-        let rgba = input.image.to_rgba8();
-        if let Some(item) = prepare_image(input.key.clone(), rgba, preparation) {
+        let (width, height) = (input.image.width(), input.image.height());
+        validate_item_dimensions(&input.key, width, height)?;
+        let rgba = input.image.into_rgba8();
+        if let Some(item) = prepare_image(input.key, rgba, preparation) {
             out.push(item);
         }
     }
     sort_prepared(&mut out, preparation.sort_order);
-    out
+    Ok(out)
 }
 
 fn prepare_image(
@@ -95,54 +98,39 @@ fn prepare_image(
     })
 }
 
-pub(crate) fn prepare_layout<K: Into<String>>(
-    inputs: Vec<(K, u32, u32)>,
+pub(crate) fn prepare_layout_items(
+    items: Vec<LayoutItem>,
     config: &OfflineConfig,
-) -> Vec<PreparedItem<()>> {
+) -> Result<Vec<PreparedItem<()>>> {
     let preparation = ImagePreparation::from(config);
-    let mut prepared = inputs
-        .into_iter()
-        .map(|(key, width, height)| {
-            let key = key.into();
-            let rect = Rect::new(0, 0, width, height);
-            PreparedItem {
-                key,
-                payload: (),
-                rect,
-                trimmed: false,
-                source: rect,
-                orig_size: (width, height),
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut prepared = Vec::with_capacity(items.len());
+    for item in items {
+        validate_item_dimensions(&item.key, item.w, item.h)?;
+        let rect = Rect::new(0, 0, item.w, item.h);
+        let source = item.source.unwrap_or(rect);
+        let orig_size = item.source_size.unwrap_or((item.w, item.h));
+        prepared.push(PreparedItem {
+            key: item.key,
+            payload: (),
+            rect,
+            trimmed: item.trimmed,
+            source,
+            orig_size,
+        });
+    }
     sort_prepared(&mut prepared, preparation.sort_order);
-    prepared
+    Ok(prepared)
 }
 
-pub(crate) fn prepare_layout_items<K: Into<String>>(
-    items: Vec<LayoutItem<K>>,
-    config: &OfflineConfig,
-) -> Vec<PreparedItem<()>> {
-    let preparation = ImagePreparation::from(config);
-    let mut prepared = items
-        .into_iter()
-        .map(|item| {
-            let key = item.key.into();
-            let rect = Rect::new(0, 0, item.w, item.h);
-            let source = item.source.unwrap_or(rect);
-            let orig_size = item.source_size.unwrap_or((item.w, item.h));
-            PreparedItem {
-                key,
-                payload: (),
-                rect,
-                trimmed: item.trimmed,
-                source,
-                orig_size,
-            }
-        })
-        .collect::<Vec<_>>();
-    sort_prepared(&mut prepared, preparation.sort_order);
-    prepared
+fn validate_item_dimensions(key: &str, width: u32, height: u32) -> Result<()> {
+    if width == 0 || height == 0 {
+        return Err(TexPackerError::InvalidItemDimensions {
+            key: key.to_string(),
+            width,
+            height,
+        });
+    }
+    Ok(())
 }
 
 fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], sort_order: SortOrder) {

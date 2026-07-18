@@ -221,7 +221,6 @@ fn test_zero_sized_texture_layout_fails_domain_validation() {
 }
 
 #[test]
-#[ignore = "U4: reject zero-sized layout items with key-aware errors"]
 fn zero_sized_layout_item_is_rejected_with_key_context() {
     let result = pack_layout(
         vec![("zero_width".to_string(), 0, 32)],
@@ -229,8 +228,31 @@ fn zero_sized_layout_item_is_rejected_with_key_context() {
     );
 
     match result {
+        Err(TexPackerError::InvalidItemDimensions { key, width, height }) => {
+            assert_eq!(key, "zero_width");
+            assert_eq!((width, height), (0, 32));
+        }
         Ok(_) => panic!("zero-sized layout item should be rejected"),
-        Err(err) => assert!(err.to_string().contains("zero_width")),
+        Err(err) => panic!("expected InvalidItemDimensions, got {err:?}"),
+    }
+}
+
+#[test]
+fn zero_sized_decoded_image_is_rejected_with_key_context() {
+    let result = tex_packer_core::OfflinePacker::new(OfflineConfig::default()).pack_images(vec![
+        InputImage {
+            key: "zero_height".into(),
+            image: DynamicImage::ImageRgba8(RgbaImage::new(32, 0)),
+        },
+    ]);
+
+    match result {
+        Err(TexPackerError::InvalidItemDimensions { key, width, height }) => {
+            assert_eq!(key, "zero_height");
+            assert_eq!((width, height), (32, 0));
+        }
+        Ok(_) => panic!("zero-sized image should be rejected"),
+        Err(err) => panic!("expected InvalidItemDimensions, got {err:?}"),
     }
 }
 

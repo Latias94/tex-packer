@@ -30,6 +30,7 @@ pub mod export_plist;
 mod free_space;
 mod geometry;
 pub mod model;
+pub mod offline;
 mod packer;
 mod packing_plan;
 pub mod pipeline;
@@ -44,7 +45,8 @@ pub use export::*;
 pub use export_manifest::{TemplateContext, TemplatePage, TemplateSprite, to_template_context};
 pub use export_plist::*;
 pub use model::*;
-pub use pipeline::*;
+pub use offline::*;
+pub use pipeline::{pack_images, pack_layout, pack_layout_items};
 pub use preparation::compute_trim_rect;
 
 /// Convenience prelude for common types and functions.
@@ -57,10 +59,8 @@ pub mod prelude {
         TransparentPolicy,
     };
     pub use crate::model::{Atlas, Frame, Meta, PackStats, Page, Rect};
-    pub use crate::pipeline::LayoutItem;
+    pub use crate::offline::{InputImage, LayoutItem, OfflinePacker, PackOutput, RenderedPage};
     pub use crate::runtime::{AtlasSession, RuntimeStats};
     pub use crate::runtime_atlas::{RuntimeAtlas, UpdateRegion};
-    pub use crate::{
-        InputImage, OutputPage, PackOutput, pack_images, pack_layout, pack_layout_items,
-    };
+    pub use crate::{OutputPage, pack_images, pack_layout, pack_layout_items};
 }

@@ -48,11 +48,15 @@ fn extrude_does_not_bleed_across_neighbors() {
     assert_eq!(out.pages.len(), 1);
     let page = &out.pages[0];
     let rgba = &page.rgba;
+    let atlas_page = out
+        .atlas
+        .page(page.page_id)
+        .expect("rendered page must resolve in atlas");
 
     // Find frames
     let mut red_f = None;
     let mut green_f = None;
-    for resolved in page.page.resolved_frames() {
+    for resolved in atlas_page.resolved_frames() {
         if resolved.frame().key() == "red" {
             red_f = Some(resolved.region().content());
         }

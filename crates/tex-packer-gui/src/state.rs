@@ -1,10 +1,11 @@
 //! Application state
 
+use crate::config_draft::GuiConfigDraft;
 use crate::presets::PackerPreset;
 use crate::stats::PackStats;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use tex_packer_core::prelude::*;
+use tex_packer_core::{InputImage, PackOutput};
 use tracing::{error, info};
 
 /// Main application state
@@ -20,8 +21,8 @@ pub struct AppState {
     pub selected_size_idx: usize,
     pub is_custom_preset: bool, // True when user modifies config
 
-    // Config (from preset or custom)
-    pub cfg: PackerConfig,
+    // Editable config (from preset or custom)
+    pub config_draft: GuiConfigDraft,
 
     // Result
     pub result: Option<PackOutput>,
@@ -89,7 +90,7 @@ impl Default for AppState {
     fn default() -> Self {
         let presets = PackerPreset::all();
         let default_preset = PackerPreset::default();
-        let cfg = default_preset.config.clone();
+        let config_draft = default_preset.draft.clone();
 
         Self {
             input_dir: None,
@@ -101,7 +102,7 @@ impl Default for AppState {
             selected_size_idx: 1,   // 2048x2048 is default
             is_custom_preset: false,
 
-            cfg,
+            config_draft,
 
             result: None,
             stats: None,
@@ -150,7 +151,7 @@ impl AppState {
     /// Apply a preset by index
     pub fn apply_preset(&mut self, preset_idx: usize) {
         if let Some(preset) = self.presets.get(preset_idx) {
-            self.cfg = preset.config.clone();
+            self.config_draft = preset.draft.clone();
             self.selected_preset_idx = preset_idx;
             self.is_custom_preset = false;
             info!("Applied preset: {}", preset.name);
@@ -178,8 +179,8 @@ impl AppState {
     pub fn apply_size(&mut self, size_idx: usize) {
         let sizes = self.recommended_sizes();
         if let Some(&(w, h)) = sizes.get(size_idx) {
-            self.cfg.max_width = w;
-            self.cfg.max_height = h;
+            self.config_draft.max_width = w;
+            self.config_draft.max_height = h;
             self.selected_size_idx = size_idx;
             self.dirty_config = true;
         }

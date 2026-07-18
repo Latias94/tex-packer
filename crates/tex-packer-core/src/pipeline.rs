@@ -1,7 +1,9 @@
-use crate::config::PackerConfig;
-use crate::config::{AlgorithmFamily, AutoMode};
+use crate::config::{
+    AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, OfflineConfig, PackingStrategy,
+    PageConfig, SkylineHeuristic,
+};
 use crate::error::{Result, TexPackerError};
-use crate::geometry::PackingContext;
+use crate::geometry::{bottom_ex_u32, right_ex_u32};
 use crate::model::{Atlas, Frame, Meta, Page, Rect};
 use crate::packer::{
     Packer, guillotine::GuillotinePacker, maxrects::MaxRectsPacker, skyline::SkylinePacker,
@@ -10,7 +12,7 @@ use crate::packing_plan::PackingPlan;
 use crate::preparation::{PreparedItem, prepare_images, prepare_layout, prepare_layout_items};
 use image::{DynamicImage, RgbaImage};
 use std::collections::HashSet;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::instrument;
 
 pub use crate::preparation::compute_trim_rect;
@@ -49,19 +51,16 @@ impl PackOutput {
 ///
 /// Notes:
 /// - Sorting is stable for deterministic results.
-/// - When `family` is `Auto`, a small portfolio is tried and the best result is chosen (pages first, then total area).
-/// - `time_budget_ms` can limit Auto evaluation time; `parallel` may evaluate in parallel when enabled.
-pub fn pack_images(inputs: Vec<InputImage>, cfg: PackerConfig) -> Result<PackOutput> {
-    // Validate configuration first
-    cfg.validate()?;
-
+/// - When the strategy is `Auto`, a small portfolio is tried and the best result is chosen (pages first, then total area).
+/// - The time budget can limit Auto evaluation; parallel execution is used when enabled and available.
+pub fn pack_images(inputs: Vec<InputImage>, config: OfflineConfig) -> Result<PackOutput> {
     if inputs.is_empty() {
         return Err(TexPackerError::Empty);
     }
 
-    let prepared = prepare_images(&inputs, &cfg);
+    let prepared = prepare_images(&inputs, &config);
 
-    pack_prepared(&prepared, &cfg)
+    pack_prepared(&prepared, &config)
 }
 
 #[derive(Clone)]
@@ -119,13 +118,111 @@ impl PackedPage {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PageSizing {
+    max_dimensions: (u32, u32),
+    border_padding: u32,
+    trailing_extra: u32,
+    force_max_dimensions: bool,
+    power_of_two: bool,
+    square: bool,
+}
+
+impl PageSizing {
+    fn new(config: &OfflineConfig) -> Self {
+        let page = config.page_config();
+        Self {
+            max_dimensions: page.max_dimensions(),
+            border_padding: page.border_padding(),
+            trailing_extra: page.trailing_extra(),
+            force_max_dimensions: config.force_max_dimensions(),
+            power_of_two: config.power_of_two(),
+            square: config.square(),
+        }
+    }
+
+    fn compute(self, frames: &[Frame]) -> (u32, u32) {
+        if self.force_max_dimensions {
+            return self.max_dimensions;
+        }
+
+        let mut width = 0;
+        let mut height = 0;
+        for frame in frames {
+            width = width.max(
+                right_ex_u32(&frame.frame)
+                    .saturating_add(self.trailing_extra)
+                    .saturating_add(self.border_padding),
+            );
+            height = height.max(
+                bottom_ex_u32(&frame.frame)
+                    .saturating_add(self.trailing_extra)
+                    .saturating_add(self.border_padding),
+            );
+        }
+
+        if self.power_of_two {
+            width = checked_next_power_of_two(width, self.max_dimensions.0);
+            height = checked_next_power_of_two(height, self.max_dimensions.1);
+        }
+        if self.square {
+            let side = width.max(height);
+            width = side;
+            height = side;
+        }
+
+        (width, height)
+    }
+}
+
+fn checked_next_power_of_two(value: u32, validated_maximum: u32) -> u32 {
+    value
+        .max(1)
+        .checked_next_power_of_two()
+        .unwrap_or(validated_maximum)
+}
+
 struct OfflinePipeline<'a> {
-    cfg: &'a PackerConfig,
+    config: &'a OfflineConfig,
+    page_sizing: PageSizing,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AutoPackingPolicy {
+    mode: AutoMode,
+    time_budget: Option<Duration>,
+    parallel: bool,
+    reference_time_threshold: Option<Duration>,
+    reference_input_threshold: Option<usize>,
+}
+
+impl AutoPackingPolicy {
+    fn from_strategy(strategy: &PackingStrategy) -> Option<Self> {
+        match *strategy {
+            PackingStrategy::Auto {
+                mode,
+                time_budget,
+                parallel,
+                reference_time_threshold,
+                reference_input_threshold,
+            } => Some(Self {
+                mode,
+                time_budget,
+                parallel,
+                reference_time_threshold,
+                reference_input_threshold,
+            }),
+            _ => None,
+        }
+    }
 }
 
 impl<'a> OfflinePipeline<'a> {
-    fn new(cfg: &'a PackerConfig) -> Self {
-        Self { cfg }
+    fn new(config: &'a OfflineConfig) -> Self {
+        Self {
+            config,
+            page_sizing: PageSizing::new(config),
+        }
     }
 
     fn pack_images(&self, prepared: &[PreparedItem<RgbaImage>]) -> Result<PackOutput> {
@@ -145,19 +242,32 @@ impl<'a> OfflinePipeline<'a> {
         prepared: &[PreparedItem<T>],
         plan: &PackingPlan,
     ) -> Result<Vec<PackedPage>> {
-        if matches!(self.cfg.family, AlgorithmFamily::Auto) {
-            return pack_auto_pages(prepared, plan, self.cfg.clone());
+        if let Some(policy) = AutoPackingPolicy::from_strategy(self.config.strategy()) {
+            return pack_auto_pages(
+                prepared,
+                plan,
+                self.config.page_config(),
+                self.page_sizing,
+                policy,
+            );
         }
 
-        self.pack_pages_for_family(prepared, plan)
+        self.pack_pages_for_strategy(prepared, plan, self.config.strategy())
     }
 
-    fn pack_pages_for_family<T>(
+    fn pack_pages_for_strategy<T>(
         &self,
         prepared: &[PreparedItem<T>],
         plan: &PackingPlan,
+        strategy: &PackingStrategy,
     ) -> Result<Vec<PackedPage>> {
-        pack_pages_for_family(prepared, plan, self.cfg)
+        pack_pages_for_strategy(
+            prepared,
+            plan,
+            self.config.page_config(),
+            self.page_sizing,
+            strategy,
+        )
     }
 
     fn build_output(
@@ -167,7 +277,7 @@ impl<'a> OfflinePipeline<'a> {
     ) -> PackOutput {
         let pages = packed_pages
             .iter()
-            .map(|packed_page| render_output_page(prepared, packed_page, self.cfg))
+            .map(|packed_page| render_output_page(prepared, packed_page, self.config))
             .collect();
         let atlas = self.build_atlas(prepared, packed_pages);
 
@@ -175,25 +285,30 @@ impl<'a> OfflinePipeline<'a> {
     }
 
     fn build_atlas<T>(&self, prepared: &[PreparedItem<T>], packed_pages: &[PackedPage]) -> Atlas {
-        build_atlas(prepared, packed_pages, self.cfg)
+        build_atlas(prepared, packed_pages, self.config)
     }
 }
 
-fn pack_prepared(prepared: &[PreparedItem<RgbaImage>], cfg: &PackerConfig) -> Result<PackOutput> {
-    OfflinePipeline::new(cfg).pack_images(prepared)
+fn pack_prepared(
+    prepared: &[PreparedItem<RgbaImage>],
+    config: &OfflineConfig,
+) -> Result<PackOutput> {
+    OfflinePipeline::new(config).pack_images(prepared)
 }
 
-fn pack_pages_for_family<T>(
+fn pack_pages_for_strategy<T>(
     prepared: &[PreparedItem<T>],
     plan: &PackingPlan,
-    cfg: &PackerConfig,
+    page_config: &PageConfig,
+    page_sizing: PageSizing,
+    strategy: &PackingStrategy,
 ) -> Result<Vec<PackedPage>> {
     let mut pages: Vec<PackedPage> = Vec::new();
     let mut remaining: Vec<usize> = (0..plan.len()).collect();
     let mut page_id = 0usize;
 
     while !remaining.is_empty() {
-        let mut packer = create_packer(cfg);
+        let mut packer = create_packer(page_config, strategy)?;
         let mut regions: Vec<PackedRegion> = Vec::new();
 
         loop {
@@ -241,7 +356,7 @@ fn pack_pages_for_family<T>(
             .iter()
             .map(|region| region.logical_frame(prepared, region.canonical_item_index))
             .collect::<Vec<_>>();
-        let (page_w, page_h) = compute_page_size(&physical_frames, cfg);
+        let (page_w, page_h) = page_sizing.compute(&physical_frames);
 
         pages.push(PackedPage {
             id: page_id,
@@ -255,26 +370,45 @@ fn pack_pages_for_family<T>(
     Ok(pages)
 }
 
-fn create_packer(cfg: &PackerConfig) -> Box<dyn Packer<String>> {
-    match cfg.family {
-        AlgorithmFamily::Skyline => Box::new(SkylinePacker::new(cfg.clone())),
-        AlgorithmFamily::MaxRects => {
-            Box::new(MaxRectsPacker::new(cfg.clone(), cfg.mr_heuristic.clone()))
-        }
-        AlgorithmFamily::Guillotine => Box::new(GuillotinePacker::new(
-            cfg.clone(),
-            cfg.g_choice.clone(),
-            cfg.g_split.clone(),
+fn create_packer(
+    page_config: &PageConfig,
+    strategy: &PackingStrategy,
+) -> Result<Box<dyn Packer<String>>> {
+    let packer: Box<dyn Packer<String>> = match *strategy {
+        PackingStrategy::Skyline {
+            heuristic,
+            use_waste_map,
+        } => Box::new(SkylinePacker::new(
+            page_config.clone(),
+            heuristic,
+            use_waste_map,
         )),
-        AlgorithmFamily::Auto => unreachable!(),
-    }
+        PackingStrategy::MaxRects {
+            heuristic,
+            reference,
+        } => Box::new(MaxRectsPacker::new(
+            page_config.clone(),
+            heuristic,
+            reference,
+        )),
+        PackingStrategy::Guillotine { choice, split } => {
+            Box::new(GuillotinePacker::new(page_config.clone(), choice, split))
+        }
+        PackingStrategy::Auto { .. } => {
+            return Err(TexPackerError::InvalidConfig(
+                "Auto must resolve to a concrete packing strategy before placement".into(),
+            ));
+        }
+    };
+    Ok(packer)
 }
 
 fn render_output_page(
     prepared: &[PreparedItem<RgbaImage>],
     packed_page: &PackedPage,
-    cfg: &PackerConfig,
+    config: &OfflineConfig,
 ) -> OutputPage {
+    let page_config = config.page_config();
     let mut canvas = RgbaImage::new(packed_page.width, packed_page.height);
     for region in &packed_page.regions {
         let prep = &prepared[region.canonical_item_index];
@@ -292,8 +426,8 @@ fn render_output_page(
         );
         let options = crate::compositing::BlitOptions {
             rotated: region.rotated,
-            extrude: cfg.texture_extrusion,
-            outlines: cfg.texture_outlines,
+            extrude: page_config.texture_extrusion(),
+            outlines: config.outlines(),
         };
         crate::compositing::blit_rgba(&prep.payload, &mut canvas, dst, src, options);
     }
@@ -307,8 +441,9 @@ fn render_output_page(
 fn build_atlas<T>(
     prepared: &[PreparedItem<T>],
     packed_pages: &[PackedPage],
-    cfg: &PackerConfig,
+    config: &OfflineConfig,
 ) -> Atlas {
+    let page_config = config.page_config();
     let atlas_pages = packed_pages
         .iter()
         .map(|page| page.to_page(prepared))
@@ -319,13 +454,18 @@ fn build_atlas<T>(
         version: env!("CARGO_PKG_VERSION").into(),
         format: "RGBA8888".into(),
         scale: 1.0,
-        power_of_two: cfg.power_of_two,
-        square: cfg.square,
-        max_dim: (cfg.max_width, cfg.max_height),
-        padding: (cfg.border_padding, cfg.texture_padding),
-        extrude: cfg.texture_extrusion,
-        allow_rotation: cfg.allow_rotation,
-        trim_mode: if cfg.trim { "trim" } else { "none" }.into(),
+        power_of_two: config.power_of_two(),
+        square: config.square(),
+        max_dim: page_config.max_dimensions(),
+        padding: (page_config.border_padding(), page_config.texture_padding()),
+        extrude: page_config.texture_extrusion(),
+        allow_rotation: page_config.allow_rotation(),
+        trim_mode: if config.trim_enabled() {
+            "trim"
+        } else {
+            "none"
+        }
+        .into(),
         background_color: None,
     };
 
@@ -345,63 +485,30 @@ fn total_packed_area(pages: &[PackedPage]) -> u64 {
 fn pack_auto_pages<T: Sync>(
     prepared: &[PreparedItem<T>],
     plan: &PackingPlan,
-    base: PackerConfig,
+    page_config: &PageConfig,
+    page_sizing: PageSizing,
+    policy: AutoPackingPolicy,
 ) -> Result<Vec<PackedPage>> {
-    let mut candidates: Vec<PackerConfig> = Vec::new();
     let n_inputs = plan.len();
-    let budget_ms = base.time_budget_ms.unwrap_or(0);
-    let thr_time = base.auto_mr_ref_time_ms_threshold.unwrap_or(200);
-    let thr_inputs = base.auto_mr_ref_input_threshold.unwrap_or(800);
-    let enable_mr_ref = matches!(base.auto_mode, AutoMode::Quality)
-        && (budget_ms >= thr_time || n_inputs >= thr_inputs);
-    match base.auto_mode {
-        AutoMode::Fast => {
-            let mut s_bl = base.clone();
-            s_bl.family = AlgorithmFamily::Skyline;
-            s_bl.skyline_heuristic = crate::config::SkylineHeuristic::BottomLeft;
-            candidates.push(s_bl);
-            let mut mr_baf = base.clone();
-            mr_baf.family = AlgorithmFamily::MaxRects;
-            mr_baf.mr_heuristic = crate::config::MaxRectsHeuristic::BestAreaFit;
-            mr_baf.mr_reference = false;
-            candidates.push(mr_baf);
-        }
-        AutoMode::Quality => {
-            let mut s_mw = base.clone();
-            s_mw.family = AlgorithmFamily::Skyline;
-            s_mw.skyline_heuristic = crate::config::SkylineHeuristic::MinWaste;
-            candidates.push(s_mw);
-            let mut mr_baf = base.clone();
-            mr_baf.family = AlgorithmFamily::MaxRects;
-            mr_baf.mr_heuristic = crate::config::MaxRectsHeuristic::BestAreaFit;
-            mr_baf.mr_reference = enable_mr_ref;
-            candidates.push(mr_baf);
-            let mut mr_bl = base.clone();
-            mr_bl.family = AlgorithmFamily::MaxRects;
-            mr_bl.mr_heuristic = crate::config::MaxRectsHeuristic::BottomLeft;
-            mr_bl.mr_reference = enable_mr_ref;
-            candidates.push(mr_bl);
-            let mut mr_cp = base.clone();
-            mr_cp.family = AlgorithmFamily::MaxRects;
-            mr_cp.mr_heuristic = crate::config::MaxRectsHeuristic::ContactPoint;
-            mr_cp.mr_reference = enable_mr_ref;
-            candidates.push(mr_cp);
-            let mut g = base.clone();
-            g.family = AlgorithmFamily::Guillotine;
-            g.g_choice = crate::config::GuillotineChoice::BestAreaFit;
-            g.g_split = crate::config::GuillotineSplit::SplitShorterLeftoverAxis;
-            candidates.push(g);
-        }
-    }
+    let reference_time_threshold = policy
+        .reference_time_threshold
+        .unwrap_or(Duration::from_millis(200));
+    let reference_input_threshold = policy.reference_input_threshold.unwrap_or(800);
+    let budget_ms = policy.time_budget.map_or(0, |budget| budget.as_millis());
+    let reference_threshold_ms = reference_time_threshold.as_millis();
+    let enable_mr_ref = matches!(policy.mode, AutoMode::Quality)
+        && (budget_ms >= reference_threshold_ms || n_inputs >= reference_input_threshold);
+    let candidates = auto_candidates(policy.mode, enable_mr_ref);
     let start = Instant::now();
 
-    // Parallel path (optional)
     #[cfg(feature = "parallel")]
     {
-        if base.parallel {
+        if policy.parallel {
             let results: Vec<(Vec<PackedPage>, u64, u32)> = candidates
                 .par_iter()
-                .filter_map(|cand| pack_pages_for_family(prepared, plan, cand).ok())
+                .filter_map(|strategy| {
+                    pack_pages_for_strategy(prepared, plan, page_config, page_sizing, strategy).ok()
+                })
                 .map(|pages| {
                     let page_count = pages.len() as u32;
                     let total_area = total_packed_area(&pages);
@@ -420,13 +527,17 @@ fn pack_auto_pages<T: Sync>(
         }
     }
 
-    // Sequential path with optional time budget
-    let mut best: Option<(Vec<PackedPage>, u64, u32)> = None; // (pages, total_area, page count)
-    for cand in candidates.into_iter() {
-        if budget_ms > 0 && start.elapsed().as_millis() as u64 > budget_ms {
+    #[cfg(not(feature = "parallel"))]
+    let _ = policy.parallel;
+
+    let mut best: Option<(Vec<PackedPage>, u64, u32)> = None;
+    for strategy in &candidates {
+        if budget_ms > 0 && start.elapsed().as_millis() > budget_ms {
             break;
         }
-        if let Ok(packed_pages) = pack_pages_for_family(prepared, plan, &cand) {
+        if let Ok(packed_pages) =
+            pack_pages_for_strategy(prepared, plan, page_config, page_sizing, strategy)
+        {
             let pages = packed_pages.len() as u32;
             let total_area = total_packed_area(&packed_pages);
             match &mut best {
@@ -447,23 +558,57 @@ fn pack_auto_pages<T: Sync>(
     })
 }
 
+fn auto_candidates(mode: AutoMode, enable_mr_ref: bool) -> Vec<PackingStrategy> {
+    match mode {
+        AutoMode::Fast => vec![
+            PackingStrategy::Skyline {
+                heuristic: SkylineHeuristic::BottomLeft,
+                use_waste_map: false,
+            },
+            PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::BestAreaFit,
+                reference: false,
+            },
+        ],
+        AutoMode::Quality => vec![
+            PackingStrategy::Skyline {
+                heuristic: SkylineHeuristic::MinWaste,
+                use_waste_map: false,
+            },
+            PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::BestAreaFit,
+                reference: enable_mr_ref,
+            },
+            PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::BottomLeft,
+                reference: enable_mr_ref,
+            },
+            PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::ContactPoint,
+                reference: enable_mr_ref,
+            },
+            PackingStrategy::Guillotine {
+                choice: GuillotineChoice::BestAreaFit,
+                split: GuillotineSplit::SplitShorterLeftoverAxis,
+            },
+        ],
+    }
+}
+
 // ---------------- Layout-only API ----------------
 
 /// Packs sizes into pages without compositing pixel data.
 /// Inputs are (key, width, height). Returns an Atlas with pages and frames; no RGBA pages.
 pub fn pack_layout<K: Into<String>>(
     inputs: Vec<(K, u32, u32)>,
-    cfg: PackerConfig,
+    config: OfflineConfig,
 ) -> Result<Atlas<String>> {
-    // Validate configuration first
-    cfg.validate()?;
-
     if inputs.is_empty() {
         return Err(TexPackerError::Empty);
     }
-    let prepared = prepare_layout(inputs, &cfg);
+    let prepared = prepare_layout(inputs, &config);
 
-    OfflinePipeline::new(&cfg).pack_layout(&prepared)
+    OfflinePipeline::new(&config).pack_layout(&prepared)
 }
 
 /// Layout-only item with optional source/source_size to propagate trimming metadata.
@@ -480,20 +625,12 @@ pub struct LayoutItem<K = String> {
 /// Packs layout-only items (with optional source/source_size metadata) into pages.
 pub fn pack_layout_items<K: Into<String>>(
     items: Vec<LayoutItem<K>>,
-    cfg: PackerConfig,
+    config: OfflineConfig,
 ) -> Result<Atlas<String>> {
-    // Validate configuration first
-    cfg.validate()?;
-
     if items.is_empty() {
         return Err(TexPackerError::Empty);
     }
-    let prepared = prepare_layout_items(items, &cfg);
+    let prepared = prepare_layout_items(items, &config);
 
-    OfflinePipeline::new(&cfg).pack_layout(&prepared)
-}
-
-/// Compute final page dimensions given placed frames and config.
-fn compute_page_size(frames: &[Frame], cfg: &PackerConfig) -> (u32, u32) {
-    PackingContext::new(cfg).compute_page_size(frames)
+    OfflinePipeline::new(&config).pack_layout(&prepared)
 }

@@ -14,11 +14,12 @@ fn test_transparent_one_by_one() {
         image: image::DynamicImage::ImageRgba8(img),
     }];
 
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(64, 64)
+    let cfg = OfflineConfig::builder()
+        .page_config(page_config())
         .trim(true)
         .transparent_policy(TransparentPolicy::OneByOne)
-        .build();
+        .build()
+        .expect("valid offline config");
 
     let out = tex_packer_core::pack_images(inputs, cfg).expect("pack");
     assert_eq!(out.atlas.pages.len(), 1);
@@ -34,12 +35,20 @@ fn transparent_input(key: &str) -> InputImage {
     }
 }
 
-fn skip_transparent_config() -> PackerConfig {
-    PackerConfig::builder()
-        .with_max_dimensions(64, 64)
+fn page_config() -> PageConfig {
+    PageConfig::builder()
+        .max_dimensions(64, 64)
+        .build()
+        .expect("valid page config")
+}
+
+fn skip_transparent_config() -> OfflineConfig {
+    OfflineConfig::builder()
+        .page_config(page_config())
         .trim(true)
         .transparent_policy(TransparentPolicy::Skip)
         .build()
+        .expect("valid offline config")
 }
 
 #[test]

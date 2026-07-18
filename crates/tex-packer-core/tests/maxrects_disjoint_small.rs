@@ -1,4 +1,4 @@
-use tex_packer_core::config::{AlgorithmFamily, MaxRectsHeuristic, PackerConfig, SortOrder};
+use tex_packer_core::config::{MaxRectsHeuristic, PageConfig};
 use tex_packer_core::model::{Frame, Rect};
 use tex_packer_core::packer::Packer;
 use tex_packer_core::packer::maxrects::MaxRectsPacker;
@@ -23,36 +23,15 @@ fn disjoint(frames: &[Frame]) -> bool {
 
 #[test]
 fn maxrects_disjoint_on_small_set() {
-    let cfg = PackerConfig {
-        max_width: 256,
-        max_height: 256,
-        allow_rotation: true,
-        force_max_dimensions: false,
-        border_padding: 0,
-        texture_padding: 0,
-        texture_extrusion: 0,
-        trim: false,
-        trim_threshold: 0,
-        texture_outlines: false,
-        power_of_two: false,
-        square: false,
-        use_waste_map: false,
-        family: AlgorithmFamily::MaxRects,
-        mr_heuristic: MaxRectsHeuristic::BestAreaFit,
-        skyline_heuristic: tex_packer_core::config::SkylineHeuristic::BottomLeft,
-        g_choice: tex_packer_core::config::GuillotineChoice::BestAreaFit,
-        g_split: tex_packer_core::config::GuillotineSplit::SplitShorterLeftoverAxis,
-        auto_mode: tex_packer_core::config::AutoMode::Quality,
-        sort_order: SortOrder::AreaDesc,
-        time_budget_ms: None,
-        parallel: false,
-        mr_reference: false,
-        auto_mr_ref_time_ms_threshold: None,
-        auto_mr_ref_input_threshold: None,
-        transparent_policy: tex_packer_core::config::TransparentPolicy::Keep,
-    };
+    let cfg = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .allow_rotation(true)
+        .texture_padding(0)
+        .texture_extrusion(0)
+        .build()
+        .expect("valid page config");
 
-    let mut p = MaxRectsPacker::new(cfg, MaxRectsHeuristic::BestAreaFit);
+    let mut p = MaxRectsPacker::new(cfg, MaxRectsHeuristic::BestAreaFit, false);
     let rects = vec![
         (64, 64),
         (32, 64),

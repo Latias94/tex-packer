@@ -1,21 +1,9 @@
-use crate::config::{PackerConfig, SkylineHeuristic};
+use crate::config::RuntimeConfig;
+pub use crate::config::{RuntimeStrategy, ShelfPolicy};
 use crate::error::{Result, TexPackerError};
 use crate::geometry::PlacementGeometry;
 use crate::model::{Atlas, Frame, Meta, Page, Rect};
 use crate::runtime_placement::RuntimePage;
-
-#[derive(Debug, Clone)]
-pub enum RuntimeStrategy {
-    Guillotine,
-    Shelf(ShelfPolicy),
-    Skyline(SkylineHeuristic),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ShelfPolicy {
-    NextFit,
-    FirstFit,
-}
 
 /// Runtime statistics for an atlas session.
 #[derive(Debug, Clone)]
@@ -72,17 +60,15 @@ impl RuntimeStats {
 }
 
 pub struct AtlasSession {
-    pub(crate) cfg: PackerConfig,
-    _strategy: RuntimeStrategy,
+    pub(crate) cfg: RuntimeConfig,
     pages: Vec<RuntimePage>,
     next_id: usize,
 }
 
 impl AtlasSession {
-    pub fn new(cfg: PackerConfig, strategy: RuntimeStrategy) -> Self {
+    pub fn new(cfg: RuntimeConfig) -> Self {
         Self {
             cfg,
-            _strategy: strategy,
             pages: Vec::new(),
             next_id: 0,
         }
@@ -91,17 +77,27 @@ impl AtlasSession {
     fn new_page(&mut self) -> RuntimePage {
         let id = self.next_id;
         self.next_id += 1;
+        let page = self.cfg.page_config();
         RuntimePage::new(
             id,
-            self.cfg.max_width,
-            self.cfg.max_height,
-            &self.cfg,
-            &self._strategy,
+            page.max_width(),
+            page.max_height(),
+            page,
+            self.cfg.strategy(),
         )
     }
 
     pub fn append(&mut self, key: String, w: u32, h: u32) -> Result<(usize, Frame<String>)> {
-        let geometry = PlacementGeometry::from_size(w, h, &self.cfg);
+        let page_config = self.cfg.page_config();
+        let Some(geometry) = PlacementGeometry::from_size(w, h, page_config) else {
+            return Err(TexPackerError::TextureTooLarge {
+                key,
+                width: w,
+                height: h,
+                max_width: page_config.max_width(),
+                max_height: page_config.max_height(),
+            });
+        };
         // Try existing pages
         for idx in 0..self.pages.len() {
             let (slot, rotated, id);
@@ -161,19 +157,20 @@ impl AtlasSession {
                 frames,
             });
         }
+        let page_config = self.cfg.page_config();
         let meta = Meta {
             schema_version: "1".into(),
             app: "tex-packer".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             format: "RGBA8888".into(),
             scale: 1.0,
-            power_of_two: self.cfg.power_of_two,
-            square: self.cfg.square,
-            max_dim: (self.cfg.max_width, self.cfg.max_height),
-            padding: (self.cfg.border_padding, self.cfg.texture_padding),
-            extrude: self.cfg.texture_extrusion,
-            allow_rotation: self.cfg.allow_rotation,
-            trim_mode: if self.cfg.trim { "trim" } else { "none" }.into(),
+            power_of_two: false,
+            square: false,
+            max_dim: page_config.max_dimensions(),
+            padding: (page_config.border_padding(), page_config.texture_padding()),
+            extrude: page_config.texture_extrusion(),
+            allow_rotation: page_config.allow_rotation(),
+            trim_mode: "none".into(),
             background_color: None,
         };
         Atlas { pages, meta }
@@ -246,8 +243,11 @@ impl AtlasSession {
             num_free_rects += free_rects;
         }
 
+        let page_config = self.cfg.page_config();
         let total_page_area = if num_pages > 0 {
-            (self.cfg.max_width as u64) * (self.cfg.max_height as u64) * (num_pages as u64)
+            (page_config.max_width() as u64)
+                * (page_config.max_height() as u64)
+                * (num_pages as u64)
         } else {
             0
         };

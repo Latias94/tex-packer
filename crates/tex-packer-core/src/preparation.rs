@@ -1,7 +1,36 @@
-use crate::config::{PackerConfig, SortOrder, TransparentPolicy};
+use crate::config::{OfflineConfig, SortOrder, TransparentPolicy};
 use crate::model::Rect;
 use crate::pipeline::{InputImage, LayoutItem};
 use image::RgbaImage;
+
+#[derive(Debug, Clone, Copy)]
+struct TrimOptions {
+    threshold: u8,
+    transparent_policy: TransparentPolicy,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ImagePreparation {
+    trim: Option<TrimOptions>,
+    sort_order: SortOrder,
+}
+
+impl From<&OfflineConfig> for ImagePreparation {
+    fn from(config: &OfflineConfig) -> Self {
+        let trim = config
+            .trim_threshold()
+            .zip(config.transparent_policy())
+            .map(|(threshold, transparent_policy)| TrimOptions {
+                threshold,
+                transparent_policy,
+            });
+
+        Self {
+            trim,
+            sort_order: config.sort_order(),
+        }
+    }
+}
 
 pub(crate) struct PreparedItem<T> {
     pub(crate) key: String,
@@ -14,30 +43,31 @@ pub(crate) struct PreparedItem<T> {
 
 pub(crate) fn prepare_images(
     inputs: &[InputImage],
-    cfg: &PackerConfig,
+    config: &OfflineConfig,
 ) -> Vec<PreparedItem<RgbaImage>> {
+    let preparation = ImagePreparation::from(config);
     let mut out = Vec::with_capacity(inputs.len());
     for input in inputs {
         let rgba = input.image.to_rgba8();
-        if let Some(item) = prepare_image(input.key.clone(), rgba, cfg) {
+        if let Some(item) = prepare_image(input.key.clone(), rgba, preparation) {
             out.push(item);
         }
     }
-    sort_prepared(&mut out, cfg);
+    sort_prepared(&mut out, preparation.sort_order);
     out
 }
 
 fn prepare_image(
     key: String,
     rgba: RgbaImage,
-    cfg: &PackerConfig,
+    preparation: ImagePreparation,
 ) -> Option<PreparedItem<RgbaImage>> {
     let (width, height) = rgba.dimensions();
-    let (rect, trimmed, source) = if cfg.trim {
-        let (trim_rect_opt, source_rect) = compute_trim_rect(&rgba, cfg.trim_threshold);
+    let (rect, trimmed, source) = if let Some(trim) = preparation.trim {
+        let (trim_rect_opt, source_rect) = compute_trim_rect(&rgba, trim.threshold);
         match trim_rect_opt {
             Some(rect) => (Rect::new(0, 0, rect.w, rect.h), true, source_rect),
-            None => match cfg.transparent_policy {
+            None => match trim.transparent_policy {
                 TransparentPolicy::Keep => (
                     Rect::new(0, 0, width, height),
                     false,
@@ -67,8 +97,9 @@ fn prepare_image(
 
 pub(crate) fn prepare_layout<K: Into<String>>(
     inputs: Vec<(K, u32, u32)>,
-    cfg: &PackerConfig,
+    config: &OfflineConfig,
 ) -> Vec<PreparedItem<()>> {
+    let preparation = ImagePreparation::from(config);
     let mut prepared = inputs
         .into_iter()
         .map(|(key, width, height)| {
@@ -84,14 +115,15 @@ pub(crate) fn prepare_layout<K: Into<String>>(
             }
         })
         .collect::<Vec<_>>();
-    sort_prepared(&mut prepared, cfg);
+    sort_prepared(&mut prepared, preparation.sort_order);
     prepared
 }
 
 pub(crate) fn prepare_layout_items<K: Into<String>>(
     items: Vec<LayoutItem<K>>,
-    cfg: &PackerConfig,
+    config: &OfflineConfig,
 ) -> Vec<PreparedItem<()>> {
+    let preparation = ImagePreparation::from(config);
     let mut prepared = items
         .into_iter()
         .map(|item| {
@@ -109,20 +141,20 @@ pub(crate) fn prepare_layout_items<K: Into<String>>(
             }
         })
         .collect::<Vec<_>>();
-    sort_prepared(&mut prepared, cfg);
+    sort_prepared(&mut prepared, preparation.sort_order);
     prepared
 }
 
-pub(crate) fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], cfg: &PackerConfig) {
-    match cfg.sort_order {
+fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], sort_order: SortOrder) {
+    match sort_order {
         SortOrder::None => {}
         SortOrder::NameAsc => {
             prepared.sort_by(|a, b| a.key.cmp(&b.key));
         }
         SortOrder::AreaDesc => {
             prepared.sort_by(|a, b| {
-                (b.rect.w * b.rect.h)
-                    .cmp(&(a.rect.w * a.rect.h))
+                (u64::from(b.rect.w) * u64::from(b.rect.h))
+                    .cmp(&(u64::from(a.rect.w) * u64::from(a.rect.h)))
                     .then_with(|| a.key.cmp(&b.key))
             });
         }

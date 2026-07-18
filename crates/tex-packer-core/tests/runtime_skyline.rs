@@ -1,13 +1,21 @@
 use tex_packer_core::prelude::*;
 
+fn runtime_config(page: PageConfig, heuristic: SkylineHeuristic) -> RuntimeConfig {
+    RuntimeConfig::builder()
+        .page_config(page)
+        .strategy(RuntimeStrategy::Skyline { heuristic })
+        .build()
+        .expect("valid runtime config")
+}
+
 #[test]
 fn test_skyline_bottom_left_basic() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     // Add some textures
     let result1 = session.append("tex1".into(), 64, 64);
@@ -32,11 +40,12 @@ fn test_skyline_bottom_left_basic() {
 
 #[test]
 fn test_skyline_min_waste_basic() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
 
-    let mut session = AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::MinWaste));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::MinWaste));
 
     // Add textures
     let result1 = session.append("a".into(), 100, 50);
@@ -53,13 +62,13 @@ fn test_skyline_min_waste_basic() {
 
 #[test]
 fn test_skyline_with_rotation() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
         .allow_rotation(true)
-        .build();
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     // Add a wide texture
     let result = session.append("wide".into(), 200, 50);
@@ -74,12 +83,12 @@ fn test_skyline_with_rotation() {
 
 #[test]
 fn test_skyline_stats() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     // Add textures
     session.append("a".into(), 64, 64).unwrap();
@@ -98,12 +107,12 @@ fn test_skyline_stats() {
 
 #[test]
 fn test_skyline_evict_and_reuse() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     // Add textures
     session.append("temp1".into(), 64, 64).unwrap();
@@ -125,12 +134,12 @@ fn test_skyline_evict_and_reuse() {
 
 #[test]
 fn test_skyline_multiple_pages() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(128, 128)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(128, 128)
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     // Fill first page
     for i in 0..10 {
@@ -145,11 +154,12 @@ fn test_skyline_multiple_pages() {
 
 #[test]
 fn test_skyline_get_frame() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
 
-    let mut session = AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::MinWaste));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::MinWaste));
 
     session.append("sprite".into(), 64, 64).unwrap();
 
@@ -165,12 +175,12 @@ fn test_skyline_get_frame() {
 
 #[test]
 fn test_skyline_keys() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     session.append("a".into(), 32, 32).unwrap();
     session.append("b".into(), 32, 32).unwrap();
@@ -185,12 +195,12 @@ fn test_skyline_keys() {
 
 #[test]
 fn test_skyline_snapshot() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     session.append("test1".into(), 64, 64).unwrap();
     session.append("test2".into(), 64, 64).unwrap();
@@ -202,13 +212,13 @@ fn test_skyline_snapshot() {
 
 #[test]
 fn test_skyline_padding() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
         .texture_padding(4)
-        .build();
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     let result = session.append("padded".into(), 64, 64);
     assert!(result.is_ok());
@@ -221,13 +231,13 @@ fn test_skyline_padding() {
 
 #[test]
 fn test_skyline_border_padding() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
         .border_padding(8)
-        .build();
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     let result = session.append("bordered".into(), 64, 64);
     assert!(result.is_ok());
@@ -240,23 +250,21 @@ fn test_skyline_border_padding() {
 
 #[test]
 fn test_skyline_comparison() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
 
     // Test BottomLeft
-    let mut session_bl = AtlasSession::new(
-        cfg.clone(),
-        RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft),
-    );
+    let mut session_bl =
+        AtlasSession::new(runtime_config(page.clone(), SkylineHeuristic::BottomLeft));
     for i in 0..5 {
         session_bl.append(format!("tex{}", i), 50, 50).unwrap();
     }
     let stats_bl = session_bl.stats();
 
     // Test MinWaste
-    let mut session_mw =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::MinWaste));
+    let mut session_mw = AtlasSession::new(runtime_config(page, SkylineHeuristic::MinWaste));
     for i in 0..5 {
         session_mw.append(format!("tex{}", i), 50, 50).unwrap();
     }
@@ -272,12 +280,12 @@ fn test_skyline_comparison() {
 
 #[test]
 fn test_skyline_large_texture() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(512, 512)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(512, 512)
+        .build()
+        .expect("valid page config");
 
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     // Add a large texture
     let result = session.append("large".into(), 400, 400);
@@ -292,11 +300,12 @@ fn test_skyline_large_texture() {
 
 #[test]
 fn test_skyline_many_small_textures() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
 
-    let mut session = AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::MinWaste));
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::MinWaste));
 
     // Add many small textures
     for i in 0..20 {
@@ -312,14 +321,14 @@ fn test_skyline_many_small_textures() {
 
 #[test]
 fn skyline_runtime_preserves_right_side_and_avoids_bottom_overlap() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(10, 10)
+    let page = PageConfig::builder()
+        .max_dimensions(10, 10)
         .allow_rotation(false)
         .texture_padding(0)
         .texture_extrusion(0)
-        .build();
-    let mut session =
-        AtlasSession::new(cfg, RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft));
+        .build()
+        .expect("valid page config");
+    let mut session = AtlasSession::new(runtime_config(page, SkylineHeuristic::BottomLeft));
 
     let (page_a, a) = session.append("full".into(), 5, 10).expect("append full");
     assert_eq!(page_a, 0);

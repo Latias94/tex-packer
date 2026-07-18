@@ -1,17 +1,15 @@
-use tex_packer_core::config::{AlgorithmFamily, GuillotineChoice, GuillotineSplit, PackerConfig};
+use tex_packer_core::config::{GuillotineChoice, GuillotineSplit, PageConfig};
 use tex_packer_core::model::Rect;
 use tex_packer_core::packer::Packer;
 use tex_packer_core::packer::guillotine::GuillotinePacker;
 
 #[test]
 fn guillotine_rotates_when_only_rotated_fits() {
-    let cfg = PackerConfig {
-        max_width: 16,
-        max_height: 12,
-        allow_rotation: true,
-        family: AlgorithmFamily::Guillotine,
-        ..Default::default()
-    };
+    let cfg = PageConfig::builder()
+        .max_dimensions(16, 12)
+        .allow_rotation(true)
+        .build()
+        .expect("valid page config");
 
     let mut p = GuillotinePacker::new(
         cfg,

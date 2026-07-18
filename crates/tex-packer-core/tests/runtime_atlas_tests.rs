@@ -1,11 +1,22 @@
 use image::{Rgba, RgbaImage};
 use tex_packer_core::prelude::*;
 
+fn guillotine_config(page: PageConfigBuilder) -> RuntimeConfig {
+    RuntimeConfig::builder()
+        .page_config(page.build().expect("valid page config"))
+        .strategy(RuntimeStrategy::Guillotine {
+            choice: GuillotineChoice::BestAreaFit,
+            split: GuillotineSplit::SplitShorterLeftoverAxis,
+        })
+        .build()
+        .expect("valid runtime config")
+}
+
 #[test]
 #[ignore = "U5: failed image appends must not retain geometry or pixel pages"]
 fn rejected_image_append_leaves_runtime_atlas_empty() {
-    let cfg = PackerConfig::builder().with_max_dimensions(64, 64).build();
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(64, 64));
+    let mut atlas = RuntimeAtlas::new(cfg);
     let invalid_image = RgbaImage::new(0, 16);
 
     assert!(
@@ -28,11 +39,9 @@ fn rejected_image_append_leaves_runtime_atlas_empty() {
 
 #[test]
 fn test_runtime_atlas_basic() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Create a test image
     let img = RgbaImage::from_pixel(64, 64, Rgba([255, 0, 0, 255]));
@@ -53,11 +62,9 @@ fn test_runtime_atlas_basic() {
 
 #[test]
 fn test_runtime_atlas_get_page_image() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Initially no pages
     assert_eq!(atlas.num_pages(), 0);
@@ -78,11 +85,9 @@ fn test_runtime_atlas_get_page_image() {
 
 #[test]
 fn test_runtime_atlas_pixel_data() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Create a red image
     let red_img = RgbaImage::from_pixel(32, 32, Rgba([255, 0, 0, 255]));
@@ -96,11 +101,9 @@ fn test_runtime_atlas_pixel_data() {
 
 #[test]
 fn test_runtime_atlas_evict_with_clear() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Add an image
     let img = RgbaImage::from_pixel(32, 32, Rgba([255, 0, 0, 255]));
@@ -125,11 +128,9 @@ fn test_runtime_atlas_evict_with_clear() {
 
 #[test]
 fn test_runtime_atlas_evict_by_key_with_clear() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Add an image
     let img = RgbaImage::from_pixel(32, 32, Rgba([0, 255, 0, 255]));
@@ -148,13 +149,14 @@ fn test_runtime_atlas_evict_by_key_with_clear() {
 #[test]
 fn test_runtime_atlas_evict_clears_extrude_area() {
     // Configure extrusion and padding, so reserved slot is larger than content
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .texture_extrusion(2)
-        .texture_padding(2)
-        .build();
+    let cfg = guillotine_config(
+        PageConfig::builder()
+            .max_dimensions(256, 256)
+            .texture_extrusion(2)
+            .texture_padding(2),
+    );
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Add a small solid image
     let img = RgbaImage::from_pixel(16, 16, Rgba([200, 50, 50, 255]));
@@ -178,13 +180,10 @@ fn test_runtime_atlas_evict_clears_extrude_area() {
 
 #[test]
 fn test_runtime_atlas_background_color() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(128, 128)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(128, 128));
 
     let bg_color = Rgba([100, 100, 100, 255]);
-    let mut atlas =
-        RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine).with_background_color(bg_color);
+    let mut atlas = RuntimeAtlas::new(cfg).with_background_color(bg_color);
 
     // Add an image to create a page
     let img = RgbaImage::from_pixel(16, 16, Rgba([255, 255, 255, 255]));
@@ -199,11 +198,9 @@ fn test_runtime_atlas_background_color() {
 
 #[test]
 fn test_runtime_atlas_multiple_images() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Add multiple images
     let red = RgbaImage::from_pixel(32, 32, Rgba([255, 0, 0, 255]));
@@ -223,11 +220,9 @@ fn test_runtime_atlas_multiple_images() {
 
 #[test]
 fn test_runtime_atlas_update_region() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     let img = RgbaImage::from_pixel(64, 48, Rgba([255, 255, 0, 255]));
     let (page_id, frame, region) = atlas.append_with_image("yellow".into(), &img).unwrap();
@@ -243,11 +238,9 @@ fn test_runtime_atlas_update_region() {
 
 #[test]
 fn test_runtime_atlas_append_without_image() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Append without image data (geometry only)
     let result = atlas.append("geometry_only".into(), 64, 64);
@@ -264,11 +257,9 @@ fn test_runtime_atlas_append_without_image() {
 
 #[test]
 fn test_runtime_atlas_mixed_usage() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Mix geometry-only and with-image appends
     atlas.append("geo1".into(), 32, 32).unwrap();
@@ -290,11 +281,9 @@ fn test_runtime_atlas_mixed_usage() {
 
 #[test]
 fn test_runtime_atlas_stats() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     let img = RgbaImage::from_pixel(64, 64, Rgba([255, 0, 0, 255]));
     atlas.append_with_image("test".into(), &img).unwrap();
@@ -306,11 +295,9 @@ fn test_runtime_atlas_stats() {
 
 #[test]
 fn test_runtime_atlas_get_page_image_mut() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     let img = RgbaImage::from_pixel(32, 32, Rgba([255, 0, 0, 255]));
     atlas.append_with_image("test".into(), &img).unwrap();
@@ -327,12 +314,13 @@ fn test_runtime_atlas_get_page_image_mut() {
 
 #[test]
 fn test_runtime_atlas_rotation() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .allow_rotation(true)
-        .build();
+    let cfg = guillotine_config(
+        PageConfig::builder()
+            .max_dimensions(256, 256)
+            .allow_rotation(true),
+    );
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Create a non-square image
     let mut img = RgbaImage::new(64, 32);

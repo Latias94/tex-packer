@@ -6,11 +6,16 @@ use tex_packer_core::prelude::*;
 #[test]
 fn layout_and_images_have_same_geometry() {
     // Trimming off to avoid data-dependent changes
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .trim(false)
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
         .allow_rotation(true)
-        .build();
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(false)
+        .build()
+        .expect("valid offline config");
 
     // Build small set with varied sizes
     let sizes = vec![("a", 40, 20), ("b", 16, 32), ("c", 10, 10), ("d", 8, 48)];
@@ -38,14 +43,19 @@ fn layout_and_images_have_same_geometry() {
 
 #[test]
 fn layout_and_images_match_for_forced_rotation() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(16, 12)
-        .trim(false)
+    let page = PageConfig::builder()
+        .max_dimensions(16, 12)
         .allow_rotation(true)
         .texture_padding(0)
         .texture_extrusion(0)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(false)
         .sort_order(SortOrder::None)
-        .build();
+        .build()
+        .expect("valid offline config");
 
     let atlas_layout =
         tex_packer_core::pack_layout(vec![("rotated", 8, 14)], cfg.clone()).expect("layout");
@@ -69,17 +79,22 @@ fn layout_and_images_match_for_forced_rotation() {
 
 #[test]
 fn layout_items_and_trimmed_images_match_with_padding_extrude_and_page_sizing() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 128)
-        .trim(true)
-        .trim_threshold(0)
+    let page = PageConfig::builder()
+        .max_dimensions(256, 128)
         .allow_rotation(true)
         .texture_padding(4)
         .texture_extrusion(2)
         .border_padding(3)
-        .pow2(true)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(true)
+        .trim_threshold(0)
+        .power_of_two(true)
         .square(true)
-        .build();
+        .build()
+        .expect("valid offline config");
     let specs = [
         ("a", 40, 30, Rect::new(5, 4, 12, 18)),
         ("b", 38, 34, Rect::new(10, 8, 20, 10)),
@@ -122,14 +137,19 @@ fn layout_items_and_trimmed_images_match_with_padding_extrude_and_page_sizing() 
 
 #[test]
 fn layout_and_images_match_when_packing_spills_to_multiple_pages() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(64, 64)
-        .trim(false)
+    let page = PageConfig::builder()
+        .max_dimensions(64, 64)
         .allow_rotation(false)
         .texture_padding(0)
         .texture_extrusion(0)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(false)
         .sort_order(SortOrder::None)
-        .build();
+        .build()
+        .expect("valid offline config");
     let sizes = [("a", 40, 40), ("b", 40, 40), ("c", 40, 40)];
 
     let atlas_layout = tex_packer_core::pack_layout(
@@ -161,12 +181,17 @@ fn layout_and_images_match_when_packing_spills_to_multiple_pages() {
 
 #[test]
 fn layout_and_images_report_same_out_of_space_progress() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(32, 32)
-        .trim(false)
+    let page = PageConfig::builder()
+        .max_dimensions(32, 32)
         .texture_padding(0)
         .texture_extrusion(0)
-        .build();
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(false)
+        .build()
+        .expect("valid offline config");
 
     let layout_err =
         tex_packer_core::pack_layout(vec![("too_big", 64, 64)], cfg.clone()).unwrap_err();

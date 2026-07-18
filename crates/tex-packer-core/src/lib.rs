@@ -7,7 +7,7 @@
 //! Quick example:
 //! ```ignore
 //! use image::ImageReader;
-//! use tex_packer_core::{InputImage, PackerConfig, pack_images};
+//! use tex_packer_core::{InputImage, OfflineConfig, pack_images};
 //! # fn main() -> anyhow::Result<()> {
 //! let img1 = ImageReader::open("a.png")?.decode()?;
 //! let img2 = ImageReader::open("b.png")?.decode()?;
@@ -15,7 +15,7 @@
 //!   InputImage { key: "a".into(), image: img1 },
 //!   InputImage { key: "b".into(), image: img2 },
 //! ];
-//! let cfg = PackerConfig { max_width: 1024, max_height: 1024, ..Default::default() };
+//! let cfg = OfflineConfig::default();
 //! let out = pack_images(inputs, cfg)?;
 //! println!("pages: {}", out.pages.len());
 //! # Ok(()) }
@@ -52,12 +52,14 @@ pub use preparation::compute_trim_rect;
 /// Importing `tex_packer_core::prelude::*` brings the primary APIs into scope.
 pub mod prelude {
     pub use crate::config::{
-        AlgorithmFamily, AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic,
-        PackerConfig, PackerConfigBuilder, SkylineHeuristic, SortOrder,
+        AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, OfflineConfig,
+        OfflineConfigBuilder, PackingStrategy, PageConfig, PageConfigBuilder, RuntimeConfig,
+        RuntimeConfigBuilder, RuntimeStrategy, ShelfPolicy, SkylineHeuristic, SortOrder,
+        TransparentPolicy,
     };
     pub use crate::model::{Atlas, Frame, Meta, PackStats, Page, Rect};
     pub use crate::pipeline::LayoutItem;
-    pub use crate::runtime::{AtlasSession, RuntimeStats, RuntimeStrategy, ShelfPolicy};
+    pub use crate::runtime::{AtlasSession, RuntimeStats};
     pub use crate::runtime_atlas::{RuntimeAtlas, UpdateRegion};
     pub use crate::{
         InputImage, OutputPage, PackOutput, pack_images, pack_layout, pack_layout_items,

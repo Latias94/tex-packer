@@ -1,7 +1,8 @@
 use image::{DynamicImage, Rgba, RgbaImage};
 use tex_packer_core::{
-    AlgorithmFamily, Frame, InputImage, PackOutput, PackerConfig, Rect, SortOrder, pack_images,
-    to_json_hash,
+    AutoMode, Frame, GuillotineChoice, GuillotineSplit, InputImage, MaxRectsHeuristic,
+    OfflineConfig, OfflineConfigBuilder, PackOutput, PackingStrategy, PageConfig, Rect,
+    SkylineHeuristic, SortOrder, pack_images, to_json_hash,
 };
 
 fn input(key: &str, image: RgbaImage) -> InputImage {
@@ -15,18 +16,38 @@ fn solid(width: u32, height: u32, color: [u8; 4]) -> RgbaImage {
     RgbaImage::from_pixel(width, height, Rgba(color))
 }
 
-fn config(width: u32, height: u32) -> PackerConfig {
-    PackerConfig {
-        max_width: width,
-        max_height: height,
-        allow_rotation: false,
-        border_padding: 0,
-        texture_padding: 0,
-        texture_extrusion: 0,
-        trim: false,
-        family: AlgorithmFamily::Skyline,
-        ..Default::default()
-    }
+fn page_config(
+    width: u32,
+    height: u32,
+    allow_rotation: bool,
+    border_padding: u32,
+    texture_padding: u32,
+    texture_extrusion: u32,
+) -> PageConfig {
+    PageConfig::builder()
+        .max_dimensions(width, height)
+        .allow_rotation(allow_rotation)
+        .border_padding(border_padding)
+        .texture_padding(texture_padding)
+        .texture_extrusion(texture_extrusion)
+        .build()
+        .expect("valid page config")
+}
+
+fn config_builder(width: u32, height: u32) -> OfflineConfigBuilder {
+    OfflineConfig::builder()
+        .page_config(page_config(width, height, false, 0, 0, 0))
+        .trim(false)
+        .strategy(PackingStrategy::Skyline {
+            heuristic: SkylineHeuristic::BottomLeft,
+            use_waste_map: false,
+        })
+}
+
+fn config(width: u32, height: u32) -> OfflineConfig {
+    config_builder(width, height)
+        .build()
+        .expect("valid offline config")
 }
 
 fn frame<'a>(output: &'a PackOutput, key: &str) -> (usize, &'a Frame) {
@@ -74,8 +95,10 @@ fn identical_images_share_region_and_keep_logical_keys() {
 #[test]
 fn logical_frames_keep_prepared_order() {
     let duplicate = solid(2, 2, [255, 0, 0, 255]);
-    let mut cfg = config(16, 16);
-    cfg.sort_order = SortOrder::None;
+    let cfg = config_builder(16, 16)
+        .sort_order(SortOrder::None)
+        .build()
+        .expect("valid offline config");
     let output = pack_images(
         vec![
             input("original", duplicate.clone()),
@@ -127,8 +150,10 @@ fn trimmed_aliases_share_pixels_and_keep_source_metadata() {
     second.put_pixel(5, 3, Rgba([255, 0, 0, 255]));
     second.put_pixel(5, 4, Rgba([0, 255, 0, 255]));
 
-    let mut cfg = config(16, 16);
-    cfg.trim = true;
+    let cfg = config_builder(16, 16)
+        .trim(true)
+        .build()
+        .expect("valid offline config");
     let output = pack_images(vec![input("first", first), input("second", second)], cfg)
         .expect("pack trimmed aliases");
 
@@ -179,11 +204,15 @@ fn duplicate_region_on_later_page_is_placed_once_without_panicking() {
 #[test]
 fn shared_region_respects_rotation_padding_and_extrusion() {
     let image = solid(4, 2, [90, 120, 150, 255]);
-    let mut cfg = config(8, 10);
-    cfg.allow_rotation = true;
-    cfg.border_padding = 1;
-    cfg.texture_padding = 2;
-    cfg.texture_extrusion = 1;
+    let cfg = OfflineConfig::builder()
+        .page_config(page_config(8, 10, true, 1, 2, 1))
+        .trim(false)
+        .strategy(PackingStrategy::Skyline {
+            heuristic: SkylineHeuristic::BottomLeft,
+            use_waste_map: false,
+        })
+        .build()
+        .expect("valid offline config");
     let output = pack_images(
         vec![input("original", image.clone()), input("alias", image)],
         cfg,
@@ -207,15 +236,32 @@ fn shared_region_respects_rotation_padding_and_extrusion() {
 
 #[test]
 fn every_offline_algorithm_reuses_identical_content() {
-    for family in [
-        AlgorithmFamily::Skyline,
-        AlgorithmFamily::MaxRects,
-        AlgorithmFamily::Guillotine,
-        AlgorithmFamily::Auto,
+    for strategy in [
+        PackingStrategy::Skyline {
+            heuristic: SkylineHeuristic::BottomLeft,
+            use_waste_map: false,
+        },
+        PackingStrategy::MaxRects {
+            heuristic: MaxRectsHeuristic::BestAreaFit,
+            reference: false,
+        },
+        PackingStrategy::Guillotine {
+            choice: GuillotineChoice::BestAreaFit,
+            split: GuillotineSplit::SplitShorterLeftoverAxis,
+        },
+        PackingStrategy::Auto {
+            mode: AutoMode::Quality,
+            time_budget: None,
+            parallel: false,
+            reference_time_threshold: None,
+            reference_input_threshold: None,
+        },
     ] {
         let image = solid(3, 2, [17, 29, 43, 255]);
-        let mut cfg = config(16, 16);
-        cfg.family = family;
+        let cfg = config_builder(16, 16)
+            .strategy(strategy)
+            .build()
+            .expect("valid offline config");
         let output = pack_images(
             vec![input("original", image.clone()), input("alias", image)],
             cfg,

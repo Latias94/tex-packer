@@ -1,6 +1,5 @@
 use tex_packer_core::config::{
-    AlgorithmFamily, AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, PackerConfig,
-    SkylineHeuristic, SortOrder,
+    GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, PageConfig, SkylineHeuristic,
 };
 use tex_packer_core::model::Rect;
 use tex_packer_core::packer::Packer;
@@ -8,35 +7,14 @@ use tex_packer_core::packer::guillotine::GuillotinePacker;
 use tex_packer_core::packer::maxrects::MaxRectsPacker;
 use tex_packer_core::packer::skyline::SkylinePacker;
 
-fn cfg_base() -> PackerConfig {
-    PackerConfig {
-        max_width: 512,
-        max_height: 512,
-        allow_rotation: false,
-        force_max_dimensions: false,
-        border_padding: 0,
-        texture_padding: 4,
-        texture_extrusion: 2,
-        trim: false,
-        trim_threshold: 0,
-        texture_outlines: false,
-        power_of_two: false,
-        square: false,
-        use_waste_map: false,
-        family: AlgorithmFamily::Skyline,
-        mr_heuristic: MaxRectsHeuristic::BestAreaFit,
-        skyline_heuristic: SkylineHeuristic::BottomLeft,
-        g_choice: GuillotineChoice::BestAreaFit,
-        g_split: GuillotineSplit::SplitShorterLeftoverAxis,
-        auto_mode: AutoMode::Quality,
-        sort_order: SortOrder::AreaDesc,
-        time_budget_ms: None,
-        parallel: false,
-        mr_reference: false,
-        auto_mr_ref_time_ms_threshold: None,
-        auto_mr_ref_input_threshold: None,
-        transparent_policy: tex_packer_core::config::TransparentPolicy::Keep,
-    }
+fn cfg_base() -> PageConfig {
+    PageConfig::builder()
+        .max_dimensions(512, 512)
+        .allow_rotation(false)
+        .texture_padding(4)
+        .texture_extrusion(2)
+        .build()
+        .expect("valid page config")
 }
 
 fn expanded_slot(f: &Rect, pad: u32, extrude: u32) -> Rect {
@@ -61,7 +39,7 @@ fn disjoint(a: &Rect, b: &Rect) -> bool {
 #[test]
 fn skyline_offsets_produce_disjoint_slots() {
     let cfg = cfg_base();
-    let mut p = SkylinePacker::new(cfg.clone());
+    let mut p = SkylinePacker::new(cfg.clone(), SkylineHeuristic::BottomLeft, false);
     let r = Rect::new(0, 0, 40, 40);
     let frames = [
         <SkylinePacker as Packer<String>>::pack(&mut p, "a".into(), &r).expect("place a"),
@@ -69,8 +47,16 @@ fn skyline_offsets_produce_disjoint_slots() {
     ];
     assert_eq!(frames.len(), 2);
 
-    let s0 = expanded_slot(&frames[0].frame, cfg.texture_padding, cfg.texture_extrusion);
-    let s1 = expanded_slot(&frames[1].frame, cfg.texture_padding, cfg.texture_extrusion);
+    let s0 = expanded_slot(
+        &frames[0].frame,
+        cfg.texture_padding(),
+        cfg.texture_extrusion(),
+    );
+    let s1 = expanded_slot(
+        &frames[1].frame,
+        cfg.texture_padding(),
+        cfg.texture_extrusion(),
+    );
     assert!(
         disjoint(&s0, &s1),
         "expanded slots (content+padding+extrude) must not overlap"
@@ -79,9 +65,8 @@ fn skyline_offsets_produce_disjoint_slots() {
 
 #[test]
 fn maxrects_offsets_produce_disjoint_slots() {
-    let mut cfg = cfg_base();
-    cfg.family = AlgorithmFamily::MaxRects;
-    let mut p = MaxRectsPacker::new(cfg.clone(), MaxRectsHeuristic::BestAreaFit);
+    let cfg = cfg_base();
+    let mut p = MaxRectsPacker::new(cfg.clone(), MaxRectsHeuristic::BestAreaFit, false);
     let r = Rect::new(0, 0, 40, 40);
     let frames = [
         <MaxRectsPacker as Packer<String>>::pack(&mut p, "a".into(), &r).expect("place a"),
@@ -89,8 +74,16 @@ fn maxrects_offsets_produce_disjoint_slots() {
     ];
     assert_eq!(frames.len(), 2);
 
-    let s0 = expanded_slot(&frames[0].frame, cfg.texture_padding, cfg.texture_extrusion);
-    let s1 = expanded_slot(&frames[1].frame, cfg.texture_padding, cfg.texture_extrusion);
+    let s0 = expanded_slot(
+        &frames[0].frame,
+        cfg.texture_padding(),
+        cfg.texture_extrusion(),
+    );
+    let s1 = expanded_slot(
+        &frames[1].frame,
+        cfg.texture_padding(),
+        cfg.texture_extrusion(),
+    );
     assert!(
         disjoint(&s0, &s1),
         "expanded slots (content+padding+extrude) must not overlap"
@@ -99,8 +92,7 @@ fn maxrects_offsets_produce_disjoint_slots() {
 
 #[test]
 fn guillotine_offsets_produce_disjoint_slots() {
-    let mut cfg = cfg_base();
-    cfg.family = AlgorithmFamily::Guillotine;
+    let cfg = cfg_base();
     let mut p = GuillotinePacker::new(
         cfg.clone(),
         GuillotineChoice::BestAreaFit,
@@ -113,8 +105,16 @@ fn guillotine_offsets_produce_disjoint_slots() {
     ];
     assert_eq!(frames.len(), 2);
 
-    let s0 = expanded_slot(&frames[0].frame, cfg.texture_padding, cfg.texture_extrusion);
-    let s1 = expanded_slot(&frames[1].frame, cfg.texture_padding, cfg.texture_extrusion);
+    let s0 = expanded_slot(
+        &frames[0].frame,
+        cfg.texture_padding(),
+        cfg.texture_extrusion(),
+    );
+    let s1 = expanded_slot(
+        &frames[1].frame,
+        cfg.texture_padding(),
+        cfg.texture_extrusion(),
+    );
     assert!(
         disjoint(&s0, &s1),
         "expanded slots (content+padding+extrude) must not overlap"

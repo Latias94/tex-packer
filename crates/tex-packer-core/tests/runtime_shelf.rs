@@ -1,14 +1,24 @@
 use tex_packer_core::prelude::*;
 
+fn runtime_config(page: PageConfigBuilder, policy: ShelfPolicy) -> RuntimeConfig {
+    RuntimeConfig::builder()
+        .page_config(page.build().expect("valid page config"))
+        .strategy(RuntimeStrategy::Shelf { policy })
+        .build()
+        .expect("valid runtime config")
+}
+
 #[test]
 fn shelf_nextfit_append_evict_reuse() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .allow_rotation(true)
-        .texture_padding(2)
-        .texture_extrusion(1)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Shelf(ShelfPolicy::NextFit));
+    let cfg = runtime_config(
+        PageConfig::builder()
+            .max_dimensions(256, 256)
+            .allow_rotation(true)
+            .texture_padding(2)
+            .texture_extrusion(1),
+        ShelfPolicy::NextFit,
+    );
+    let mut sess = AtlasSession::new(cfg);
 
     let (page_a, _a) = sess.append("A".into(), 60, 30).expect("append A");
     let (_page_b, _b) = sess.append("B".into(), 80, 30).expect("append B");
@@ -23,13 +33,15 @@ fn shelf_nextfit_append_evict_reuse() {
 
 #[test]
 fn shelf_firstfit_rotation_helps() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(128, 128)
-        .allow_rotation(true)
-        .texture_padding(0)
-        .texture_extrusion(0)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Shelf(ShelfPolicy::FirstFit));
+    let cfg = runtime_config(
+        PageConfig::builder()
+            .max_dimensions(128, 128)
+            .allow_rotation(true)
+            .texture_padding(0)
+            .texture_extrusion(0),
+        ShelfPolicy::FirstFit,
+    );
+    let mut sess = AtlasSession::new(cfg);
     // Create a tall shelf then place a wide-but-short item which fits rotated
     let (_p1, _s1) = sess.append("Tall".into(), 10, 40).expect("append tall");
     let (_p2, s2) = sess

@@ -1,7 +1,7 @@
-use crate::config::PackerConfig;
+use crate::config::RuntimeConfig;
 use crate::error::{Result, TexPackerError};
 use crate::model::Frame;
-use crate::runtime::{AtlasSession, RuntimeStats, RuntimeStrategy};
+use crate::runtime::{AtlasSession, RuntimeStats};
 use image::{Rgba, RgbaImage};
 
 /// Region that needs to be updated on GPU texture.
@@ -50,21 +50,29 @@ pub struct RuntimeAtlas {
     session: AtlasSession,
     pages: Vec<RgbaImage>,
     background_color: Rgba<u8>,
+    outlines: bool,
 }
 
 impl RuntimeAtlas {
     /// Create a new runtime atlas with pixel data management.
-    pub fn new(cfg: PackerConfig, strategy: RuntimeStrategy) -> Self {
+    pub fn new(cfg: RuntimeConfig) -> Self {
         Self {
-            session: AtlasSession::new(cfg, strategy),
+            session: AtlasSession::new(cfg),
             pages: Vec::new(),
             background_color: Rgba([0, 0, 0, 0]), // Transparent by default
+            outlines: false,
         }
     }
 
     /// Set the background color for new pages.
     pub fn with_background_color(mut self, color: Rgba<u8>) -> Self {
         self.background_color = color;
+        self
+    }
+
+    /// Enable or disable debug outlines when compositing appended images.
+    pub fn with_outlines(mut self, enabled: bool) -> Self {
+        self.outlines = enabled;
         self
     }
 
@@ -199,10 +207,11 @@ impl RuntimeAtlas {
 
     /// Ensure a page exists, creating it if necessary.
     fn ensure_page(&mut self, page_id: usize) {
+        let page_config = self.session.cfg.page_config();
         while self.pages.len() <= page_id {
             let page_img = RgbaImage::from_pixel(
-                self.session.cfg.max_width,
-                self.session.cfg.max_height,
+                page_config.max_width(),
+                page_config.max_height(),
                 self.background_color,
             );
             self.pages.push(page_img);
@@ -226,14 +235,13 @@ impl RuntimeAtlas {
         let dst_y = frame.frame.y;
 
         // Reuse core compositing (with extrusion and optional outlines)
-        let extrude = self.session.cfg.texture_extrusion;
-        let outlines = self.session.cfg.texture_outlines;
+        let extrude = self.session.cfg.page_config().texture_extrusion();
         let dst = crate::compositing::BlitRect::new(dst_x, dst_y, frame.frame.w, frame.frame.h);
         let src = crate::compositing::BlitRect::new(0, 0, src_w, src_h);
         let options = crate::compositing::BlitOptions {
             rotated: frame.rotated,
             extrude,
-            outlines,
+            outlines: self.outlines,
         };
         crate::compositing::blit_rgba(image, page, dst, src, options);
 

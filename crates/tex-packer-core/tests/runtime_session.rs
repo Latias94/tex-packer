@@ -1,14 +1,31 @@
 use tex_packer_core::prelude::*;
 
+fn runtime_config(page: PageConfigBuilder, strategy: RuntimeStrategy) -> RuntimeConfig {
+    RuntimeConfig::builder()
+        .page_config(page.build().expect("valid page config"))
+        .strategy(strategy)
+        .build()
+        .expect("valid runtime config")
+}
+
+fn guillotine_strategy() -> RuntimeStrategy {
+    RuntimeStrategy::Guillotine {
+        choice: GuillotineChoice::BestAreaFit,
+        split: GuillotineSplit::SplitShorterLeftoverAxis,
+    }
+}
+
 #[test]
 fn runtime_append_evict_reuse_space() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .allow_rotation(true)
-        .texture_padding(2)
-        .texture_extrusion(1)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let cfg = runtime_config(
+        PageConfig::builder()
+            .max_dimensions(256, 256)
+            .allow_rotation(true)
+            .texture_padding(2)
+            .texture_extrusion(1),
+        guillotine_strategy(),
+    );
+    let mut sess = AtlasSession::new(cfg);
 
     // Append two items
     let (page_a, a) = sess.append("A".into(), 40, 32).expect("append A");
@@ -37,13 +54,15 @@ fn runtime_append_evict_reuse_space() {
 
 #[test]
 fn runtime_guillotine_reports_rotated_frame_dimensions_in_atlas_orientation() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .allow_rotation(true)
-        .texture_padding(2)
-        .texture_extrusion(1)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let cfg = runtime_config(
+        PageConfig::builder()
+            .max_dimensions(256, 256)
+            .allow_rotation(true)
+            .texture_padding(2)
+            .texture_extrusion(1),
+        guillotine_strategy(),
+    );
+    let mut sess = AtlasSession::new(cfg);
 
     let (page_a, _a) = sess.append("A".into(), 40, 32).expect("append A");
     let (_page_b, b) = sess.append("B".into(), 48, 24).expect("append B");

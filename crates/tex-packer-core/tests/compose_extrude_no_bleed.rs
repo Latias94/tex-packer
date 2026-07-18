@@ -1,6 +1,6 @@
 use image::{DynamicImage, Rgba, RgbaImage};
-use tex_packer_core::config::{AlgorithmFamily, AutoMode, SortOrder};
-use tex_packer_core::{InputImage, PackerConfig, pack_images};
+use tex_packer_core::config::{OfflineConfig, PackingStrategy, PageConfig, SkylineHeuristic};
+use tex_packer_core::{InputImage, pack_images};
 
 fn solid_image(w: u32, h: u32, rgba: [u8; 4]) -> DynamicImage {
     let mut img = RgbaImage::new(w, h);
@@ -27,34 +27,22 @@ fn extrude_does_not_bleed_across_neighbors() {
         },
     ];
 
-    let cfg = PackerConfig {
-        max_width: 128,
-        max_height: 128,
-        allow_rotation: false,
-        force_max_dimensions: false,
-        border_padding: 0,
-        texture_padding: 4,
-        texture_extrusion: 2,
-        trim: false,
-        trim_threshold: 0,
-        texture_outlines: false,
-        power_of_two: false,
-        square: false,
-        use_waste_map: false,
-        family: AlgorithmFamily::Skyline,
-        mr_heuristic: tex_packer_core::config::MaxRectsHeuristic::BestAreaFit,
-        skyline_heuristic: tex_packer_core::config::SkylineHeuristic::BottomLeft,
-        g_choice: tex_packer_core::config::GuillotineChoice::BestAreaFit,
-        g_split: tex_packer_core::config::GuillotineSplit::SplitShorterLeftoverAxis,
-        auto_mode: AutoMode::Quality,
-        sort_order: SortOrder::AreaDesc,
-        time_budget_ms: None,
-        parallel: false,
-        mr_reference: false,
-        auto_mr_ref_time_ms_threshold: None,
-        auto_mr_ref_input_threshold: None,
-        transparent_policy: tex_packer_core::config::TransparentPolicy::Keep,
-    };
+    let page = PageConfig::builder()
+        .max_dimensions(128, 128)
+        .allow_rotation(false)
+        .texture_padding(4)
+        .texture_extrusion(2)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(false)
+        .strategy(PackingStrategy::Skyline {
+            heuristic: SkylineHeuristic::BottomLeft,
+            use_waste_map: false,
+        })
+        .build()
+        .expect("valid offline config");
 
     let out = pack_images(inputs, cfg).expect("pack");
     assert_eq!(out.pages.len(), 1);

@@ -5,14 +5,13 @@ use tex_packer_core::prelude::*;
 #[derive(Clone)]
 struct OfflineCase {
     name: &'static str,
-    cfg: PackerConfig,
+    cfg: OfflineConfig,
 }
 
 #[derive(Clone)]
 struct RuntimeCase {
     name: &'static str,
-    cfg: PackerConfig,
-    strategy: RuntimeStrategy,
+    cfg: RuntimeConfig,
 }
 
 #[test]
@@ -44,14 +43,19 @@ fn offline_algorithms_satisfy_shared_frame_invariants() {
 
 #[test]
 fn offline_multi_page_invariants_are_page_local() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(32, 32)
-        .force_max_dimensions(true)
+    let page = PageConfig::builder()
+        .max_dimensions(32, 32)
         .allow_rotation(false)
         .texture_padding(0)
         .texture_extrusion(0)
-        .family(AlgorithmFamily::Skyline)
-        .build();
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .force_max_dimensions(true)
+        .strategy(skyline_strategy(SkylineHeuristic::BottomLeft, false))
+        .build()
+        .expect("valid offline config");
     let items = vec![("a", 32, 32), ("b", 32, 32), ("c", 32, 32)];
 
     let atlas = pack_layout(items.clone(), cfg).expect("multi-page skyline layout");
@@ -92,17 +96,23 @@ fn runtime_strategies_satisfy_shared_frame_invariants() {
 
 #[test]
 fn runtime_multi_page_invariants_are_page_local() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(32, 32)
+    let page = PageConfig::builder()
+        .max_dimensions(32, 32)
         .allow_rotation(false)
         .texture_padding(0)
         .texture_extrusion(0)
-        .build();
+        .build()
+        .expect("valid page config");
     let items = vec![("a", 32, 32), ("b", 32, 32), ("c", 32, 32)];
     let case = RuntimeCase {
         name: "runtime guillotine multi-page",
-        cfg,
-        strategy: RuntimeStrategy::Guillotine,
+        cfg: runtime_config(
+            page,
+            RuntimeStrategy::Guillotine {
+                choice: GuillotineChoice::BestAreaFit,
+                split: GuillotineSplit::SplitShorterLeftoverAxis,
+            },
+        ),
     };
 
     let atlas = run_runtime_case(&case, &items);
@@ -119,97 +129,136 @@ fn offline_cases() -> Vec<OfflineCase> {
     vec![
         OfflineCase {
             name: "offline skyline bottom-left",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::Skyline)
-                .skyline_heuristic(SkylineHeuristic::BottomLeft)
-                .build(),
+            cfg: offline_config(skyline_strategy(SkylineHeuristic::BottomLeft, false)),
         },
         OfflineCase {
             name: "offline skyline min-waste with waste map",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::Skyline)
-                .skyline_heuristic(SkylineHeuristic::MinWaste)
-                .use_waste_map(true)
-                .build(),
+            cfg: offline_config(skyline_strategy(SkylineHeuristic::MinWaste, true)),
         },
         OfflineCase {
             name: "offline maxrects best-area-fit",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::MaxRects)
-                .mr_heuristic(MaxRectsHeuristic::BestAreaFit)
-                .build(),
+            cfg: offline_config(PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::BestAreaFit,
+                reference: false,
+            }),
         },
         OfflineCase {
             name: "offline maxrects reference best-area-fit",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::MaxRects)
-                .mr_heuristic(MaxRectsHeuristic::BestAreaFit)
-                .mr_reference(true)
-                .build(),
+            cfg: offline_config(PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::BestAreaFit,
+                reference: true,
+            }),
         },
         OfflineCase {
             name: "offline guillotine best-area-fit",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::Guillotine)
-                .g_choice(GuillotineChoice::BestAreaFit)
-                .g_split(GuillotineSplit::SplitShorterLeftoverAxis)
-                .build(),
+            cfg: offline_config(PackingStrategy::Guillotine {
+                choice: GuillotineChoice::BestAreaFit,
+                split: GuillotineSplit::SplitShorterLeftoverAxis,
+            }),
         },
         OfflineCase {
             name: "offline auto quality",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::Auto)
-                .auto_mode(AutoMode::Quality)
-                .time_budget_ms(Some(50))
-                .build(),
+            cfg: offline_config(PackingStrategy::Auto {
+                mode: AutoMode::Quality,
+                time_budget: Some(std::time::Duration::from_millis(50)),
+                parallel: false,
+                reference_time_threshold: None,
+                reference_input_threshold: None,
+            }),
         },
     ]
 }
 
 fn runtime_cases() -> Vec<RuntimeCase> {
-    let cfg = base_cfg().build();
+    let page = base_page_config();
     vec![
         RuntimeCase {
             name: "runtime guillotine",
-            cfg: cfg.clone(),
-            strategy: RuntimeStrategy::Guillotine,
+            cfg: runtime_config(
+                page.clone(),
+                RuntimeStrategy::Guillotine {
+                    choice: GuillotineChoice::BestAreaFit,
+                    split: GuillotineSplit::SplitShorterLeftoverAxis,
+                },
+            ),
         },
         RuntimeCase {
             name: "runtime shelf next-fit",
-            cfg: cfg.clone(),
-            strategy: RuntimeStrategy::Shelf(ShelfPolicy::NextFit),
+            cfg: runtime_config(
+                page.clone(),
+                RuntimeStrategy::Shelf {
+                    policy: ShelfPolicy::NextFit,
+                },
+            ),
         },
         RuntimeCase {
             name: "runtime shelf first-fit",
-            cfg: cfg.clone(),
-            strategy: RuntimeStrategy::Shelf(ShelfPolicy::FirstFit),
+            cfg: runtime_config(
+                page.clone(),
+                RuntimeStrategy::Shelf {
+                    policy: ShelfPolicy::FirstFit,
+                },
+            ),
         },
         RuntimeCase {
             name: "runtime skyline bottom-left",
-            cfg: cfg.clone(),
-            strategy: RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft),
+            cfg: runtime_config(
+                page.clone(),
+                RuntimeStrategy::Skyline {
+                    heuristic: SkylineHeuristic::BottomLeft,
+                },
+            ),
         },
         RuntimeCase {
             name: "runtime skyline min-waste",
-            cfg,
-            strategy: RuntimeStrategy::Skyline(SkylineHeuristic::MinWaste),
+            cfg: runtime_config(
+                page,
+                RuntimeStrategy::Skyline {
+                    heuristic: SkylineHeuristic::MinWaste,
+                },
+            ),
         },
     ]
 }
 
-fn base_cfg() -> PackerConfigBuilder {
-    PackerConfig::builder()
-        .with_max_dimensions(96, 96)
-        .force_max_dimensions(true)
+fn base_page_config() -> PageConfig {
+    PageConfig::builder()
+        .max_dimensions(96, 96)
         .allow_rotation(true)
         .border_padding(3)
         .texture_padding(2)
         .texture_extrusion(1)
+        .build()
+        .expect("valid shared page config")
+}
+
+fn offline_config(strategy: PackingStrategy) -> OfflineConfig {
+    OfflineConfig::builder()
+        .page_config(base_page_config())
+        .force_max_dimensions(true)
         .sort_order(SortOrder::AreaDesc)
+        .strategy(strategy)
+        .build()
+        .expect("valid offline config")
+}
+
+fn skyline_strategy(heuristic: SkylineHeuristic, use_waste_map: bool) -> PackingStrategy {
+    PackingStrategy::Skyline {
+        heuristic,
+        use_waste_map,
+    }
+}
+
+fn runtime_config(page: PageConfig, strategy: RuntimeStrategy) -> RuntimeConfig {
+    RuntimeConfig::builder()
+        .page_config(page)
+        .strategy(strategy)
+        .build()
+        .expect("valid runtime config")
 }
 
 fn run_runtime_case(case: &RuntimeCase, items: &[(&str, u32, u32)]) -> Atlas<String> {
-    let mut session = AtlasSession::new(case.cfg.clone(), case.strategy.clone());
+    let mut session = AtlasSession::new(case.cfg.clone());
     for (key, w, h) in items {
         session
             .append((*key).to_string(), *w, *h)

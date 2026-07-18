@@ -1,34 +1,36 @@
 use super::Packer;
-use crate::config::{MaxRectsHeuristic, PackerConfig};
+use crate::config::{MaxRectsHeuristic, PageConfig};
 use crate::free_space::{prune_contained, subtract_intersections};
 use crate::geometry::{
-    PackingContext, PlacementGeometry, area_fit_score, bottom_ex_u32, contains_rect, intersects,
-    overlap_1d, right_ex_u32,
+    PlacementGeometry, area_fit_score, bottom_ex_u32, contains_rect, intersects, overlap_1d,
+    right_ex_u32, usable_area,
 };
 use crate::model::{Frame, Rect};
 
 pub struct MaxRectsPacker {
-    config: PackerConfig,
+    page_config: PageConfig,
     border: Rect,
     free: Vec<Rect>,
     used: Vec<Rect>,
     heuristic: MaxRectsHeuristic,
+    reference: bool,
 }
 
 impl MaxRectsPacker {
-    pub fn new(config: PackerConfig, heuristic: MaxRectsHeuristic) -> Self {
-        let border = PackingContext::new(&config).usable_area();
+    pub fn new(page_config: PageConfig, heuristic: MaxRectsHeuristic, reference: bool) -> Self {
+        let border = usable_area(&page_config);
         Self {
-            config,
+            page_config,
             border,
             free: vec![border],
             used: Vec::new(),
             heuristic,
+            reference,
         }
     }
 
     fn place_rect(&mut self, node: &Rect) {
-        if self.config.mr_reference {
+        if self.reference {
             return self.place_rect_ref(node);
         }
         self.free = subtract_intersections(self.free.iter().copied(), node);
@@ -189,7 +191,7 @@ impl MaxRectsPacker {
                 }
             }
             // rotated
-            if self.config.allow_rotation && fr.w >= h && fr.h >= w {
+            if self.page_config.allow_rotation() && fr.w >= h && fr.h >= w {
                 let (s1, s2) = self.score(fr, h, w);
                 let top = fr.y.saturating_add(w);
                 if s1 < best_score1
@@ -261,13 +263,15 @@ impl MaxRectsPacker {
 
 impl<K: Clone> Packer<K> for MaxRectsPacker {
     fn can_pack(&self, rect: &Rect) -> bool {
-        let geometry = PlacementGeometry::new(rect, &self.config);
+        let Some(geometry) = PlacementGeometry::new(rect, &self.page_config) else {
+            return false;
+        };
         self.find_position(geometry.reserved_w, geometry.reserved_h)
             .is_some()
     }
 
     fn pack(&mut self, key: K, rect: &Rect) -> Option<Frame<K>> {
-        let geometry = PlacementGeometry::new(rect, &self.config);
+        let geometry = PlacementGeometry::new(rect, &self.page_config)?;
         if let Some((place, rotated)) = self.find_position(geometry.reserved_w, geometry.reserved_h)
         {
             self.place_rect(&place);

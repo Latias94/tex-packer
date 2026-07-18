@@ -1,6 +1,7 @@
 //! Packer presets for common use cases
 
-use tex_packer_core::prelude::*;
+use crate::config_draft::{GuiConfigDraft, StrategyKind};
+use tex_packer_core::config::{AutoMode, MaxRectsHeuristic, SkylineHeuristic};
 
 /// A packer preset with configuration and description
 #[derive(Clone)]
@@ -9,7 +10,7 @@ pub struct PackerPreset {
     pub description: &'static str,
     pub details: Vec<&'static str>,
     pub icon: &'static str,
-    pub config: PackerConfig,
+    pub draft: GuiConfigDraft,
     pub recommended_sizes: Vec<(u32, u32)>,
 }
 
@@ -30,16 +31,15 @@ impl PackerPreset {
                 "Recommended for: Final game builds, asset publishing",
             ],
             icon: "💎",
-            config: PackerConfig::builder()
-                .with_max_dimensions(2048, 2048)
-                .allow_rotation(true)
-                .trim(true)
-                .texture_padding(2)
-                .texture_extrusion(2)
-                .family(AlgorithmFamily::Auto)
-                .auto_mode(AutoMode::Quality)
-                .time_budget_ms(Some(500))
-                .build(),
+            draft: GuiConfigDraft {
+                max_width: 2048,
+                max_height: 2048,
+                texture_extrusion: 2,
+                strategy_kind: StrategyKind::Auto,
+                auto_mode: AutoMode::Quality,
+                time_budget_ms: Some(500),
+                ..Default::default()
+            },
             recommended_sizes: vec![(1024, 1024), (2048, 2048), (4096, 4096)],
         }
     }
@@ -60,15 +60,14 @@ impl PackerPreset {
                 "Recommended for: Development, quick previews, iteration",
             ],
             icon: "⚡",
-            config: PackerConfig::builder()
-                .with_max_dimensions(2048, 2048)
-                .allow_rotation(true)
-                .trim(true)
-                .texture_padding(2)
-                .texture_extrusion(2)
-                .family(AlgorithmFamily::Skyline)
-                .skyline_heuristic(SkylineHeuristic::MinWaste)
-                .build(),
+            draft: GuiConfigDraft {
+                max_width: 2048,
+                max_height: 2048,
+                texture_extrusion: 2,
+                strategy_kind: StrategyKind::Skyline,
+                skyline_heuristic: SkylineHeuristic::MinWaste,
+                ..Default::default()
+            },
             recommended_sizes: vec![(1024, 1024), (2048, 2048)],
         }
     }
@@ -89,15 +88,15 @@ impl PackerPreset {
                 "Recommended for: Web games, HTML5, icon sheets",
             ],
             icon: "🌐",
-            config: PackerConfig::builder()
-                .with_max_dimensions(4096, 4096)
-                .allow_rotation(false)
-                .trim(true)
-                .texture_padding(1)
-                .texture_extrusion(0)
-                .family(AlgorithmFamily::MaxRects)
-                .mr_heuristic(MaxRectsHeuristic::BestAreaFit)
-                .build(),
+            draft: GuiConfigDraft {
+                max_width: 4096,
+                max_height: 4096,
+                allow_rotation: false,
+                texture_padding: 1,
+                strategy_kind: StrategyKind::MaxRects,
+                max_rects_heuristic: MaxRectsHeuristic::BestAreaFit,
+                ..Default::default()
+            },
             recommended_sizes: vec![(2048, 2048), (4096, 4096)],
         }
     }
@@ -119,17 +118,16 @@ impl PackerPreset {
                 "Recommended for: Unity mobile games (iOS/Android)",
             ],
             icon: "📱",
-            config: PackerConfig::builder()
-                .with_max_dimensions(2048, 2048)
-                .allow_rotation(true)
-                .trim(true)
-                .texture_padding(2)
-                .texture_extrusion(2)
-                .pow2(true)
-                .square(true)
-                .family(AlgorithmFamily::Auto)
-                .auto_mode(AutoMode::Quality)
-                .build(),
+            draft: GuiConfigDraft {
+                max_width: 2048,
+                max_height: 2048,
+                texture_extrusion: 2,
+                power_of_two: true,
+                square: true,
+                strategy_kind: StrategyKind::Auto,
+                auto_mode: AutoMode::Quality,
+                ..Default::default()
+            },
             recommended_sizes: vec![(512, 512), (1024, 1024), (2048, 2048)],
         }
     }
@@ -151,17 +149,14 @@ impl PackerPreset {
                 "Recommended for: Godot 4.x projects",
             ],
             icon: "🎮",
-            config: PackerConfig::builder()
-                .with_max_dimensions(4096, 4096)
-                .allow_rotation(true)
-                .trim(true)
-                .texture_padding(2)
-                .texture_extrusion(2)
-                .pow2(false)
-                .square(false)
-                .family(AlgorithmFamily::Auto)
-                .auto_mode(AutoMode::Quality)
-                .build(),
+            draft: GuiConfigDraft {
+                max_width: 4096,
+                max_height: 4096,
+                texture_extrusion: 2,
+                strategy_kind: StrategyKind::Auto,
+                auto_mode: AutoMode::Quality,
+                ..Default::default()
+            },
             recommended_sizes: vec![(2048, 2048), (4096, 4096)],
         }
     }
@@ -183,17 +178,16 @@ impl PackerPreset {
                 "Recommended for: Unreal Engine 4/5 projects",
             ],
             icon: "🎯",
-            config: PackerConfig::builder()
-                .with_max_dimensions(4096, 4096)
-                .allow_rotation(true)
-                .trim(true)
-                .texture_padding(2)
-                .texture_extrusion(2)
-                .border_padding(2)
-                .pow2(true)
-                .family(AlgorithmFamily::Auto)
-                .auto_mode(AutoMode::Quality)
-                .build(),
+            draft: GuiConfigDraft {
+                max_width: 4096,
+                max_height: 4096,
+                border_padding: 2,
+                texture_extrusion: 2,
+                power_of_two: true,
+                strategy_kind: StrategyKind::Auto,
+                auto_mode: AutoMode::Quality,
+                ..Default::default()
+            },
             recommended_sizes: vec![(2048, 2048), (4096, 4096)],
         }
     }
@@ -215,16 +209,15 @@ impl PackerPreset {
                 "Recommended for: Runtime dynamic atlas generation",
             ],
             icon: "🚀",
-            config: PackerConfig::builder()
-                .with_max_dimensions(2048, 2048)
-                .allow_rotation(true)
-                .trim(false)
-                .texture_padding(2)
-                .texture_extrusion(2)
-                .use_waste_map(false)
-                .family(AlgorithmFamily::Skyline)
-                .skyline_heuristic(SkylineHeuristic::BottomLeft)
-                .build(),
+            draft: GuiConfigDraft {
+                max_width: 2048,
+                max_height: 2048,
+                texture_extrusion: 2,
+                trim: false,
+                strategy_kind: StrategyKind::Skyline,
+                skyline_heuristic: SkylineHeuristic::BottomLeft,
+                ..Default::default()
+            },
             recommended_sizes: vec![(2048, 2048), (4096, 4096)],
         }
     }
@@ -247,18 +240,17 @@ impl PackerPreset {
                 "Recommended for: Final production builds, maximum efficiency",
             ],
             icon: "🏆",
-            config: PackerConfig::builder()
-                .with_max_dimensions(2048, 2048)
-                .allow_rotation(true)
-                .trim(true)
-                .texture_padding(2)
-                .texture_extrusion(2)
-                .family(AlgorithmFamily::Auto)
-                .auto_mode(AutoMode::Quality)
-                .time_budget_ms(Some(5000))
-                .mr_reference(true)
-                .parallel(true)
-                .build(),
+            draft: GuiConfigDraft {
+                max_width: 2048,
+                max_height: 2048,
+                texture_extrusion: 2,
+                strategy_kind: StrategyKind::Auto,
+                auto_mode: AutoMode::Quality,
+                time_budget_ms: Some(5000),
+                max_rects_reference: true,
+                parallel: true,
+                ..Default::default()
+            },
             recommended_sizes: vec![(2048, 2048), (4096, 4096)],
         }
     }
@@ -280,5 +272,51 @@ impl PackerPreset {
     /// Get default preset (Quality)
     pub fn default() -> Self {
         Self::quality()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tex_packer_core::config::PackingStrategy;
+
+    #[test]
+    fn every_preset_builds_a_valid_offline_config() {
+        let presets = PackerPreset::all();
+
+        assert_eq!(presets.len(), 8);
+        for preset in presets {
+            preset
+                .draft
+                .try_build_offline_config()
+                .unwrap_or_else(|error| panic!("{} preset is invalid: {error}", preset.name));
+        }
+    }
+
+    #[test]
+    fn presets_keep_their_selected_strategy() {
+        let presets = PackerPreset::all();
+        let expected = [
+            StrategyKind::Auto,
+            StrategyKind::Skyline,
+            StrategyKind::MaxRects,
+            StrategyKind::Auto,
+            StrategyKind::Auto,
+            StrategyKind::Auto,
+            StrategyKind::Skyline,
+            StrategyKind::Auto,
+        ];
+
+        for (preset, expected_kind) in presets.iter().zip(expected) {
+            assert_eq!(preset.draft.strategy_kind, expected_kind, "{}", preset.name);
+        }
+
+        let maximum = presets
+            .last()
+            .expect("the maximum-quality preset should exist")
+            .draft
+            .try_build_offline_config()
+            .expect("the maximum-quality preset should be valid");
+        assert!(matches!(maximum.strategy(), PackingStrategy::Auto { .. }));
     }
 }

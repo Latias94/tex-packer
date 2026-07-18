@@ -1,5 +1,6 @@
 //! tex-packer-gui using egui/eframe with left/right layout
 
+mod config_draft;
 mod presets;
 mod state;
 mod stats;
@@ -9,7 +10,7 @@ use crate::stats::PackStats as GuiPackStats;
 use eframe::{egui, egui::Context};
 use state::AppState;
 use std::time::{Duration, Instant};
-use tex_packer_core::prelude::*;
+use tex_packer_core::{InputImage, PackOutput, pack_images};
 
 #[derive(Default)]
 struct GuiApp {
@@ -122,6 +123,14 @@ impl GuiApp {
             self.state.set_error("No inputs loaded");
             return;
         }
+        let config = match self.state.config_draft.try_build_offline_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.state
+                    .set_error(format!("Invalid packing configuration: {error}"));
+                return;
+            }
+        };
         let inputs: Vec<InputImage> = self
             .state
             .inputs
@@ -132,14 +141,13 @@ impl GuiApp {
                 image: i.image.clone(),
             })
             .collect();
-        let cfg = self.state.cfg.clone();
         let num_images = inputs.len();
         self.state.pack_in_progress = true;
         self.page_textures.clear();
         self.cancel_requested = false;
         let handle = std::thread::spawn(move || {
             let start = std::time::Instant::now();
-            match pack_images(inputs, cfg.clone()) {
+            match pack_images(inputs, config) {
                 Ok(out) => {
                     let pack_time_ms = start.elapsed().as_millis() as u64;
                     let stats = GuiPackStats::from_output(&out, num_images, pack_time_ms);

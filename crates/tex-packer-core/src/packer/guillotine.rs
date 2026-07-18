@@ -1,11 +1,11 @@
 use super::Packer;
-use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig};
+use crate::config::{GuillotineChoice, GuillotineSplit, PageConfig};
 use crate::free_space::{guillotine_score, guillotine_split, merge_adjacent, prune_contained};
-use crate::geometry::{PackingContext, PlacementGeometry};
+use crate::geometry::{PlacementGeometry, usable_area};
 use crate::model::{Frame, Rect};
 
 pub struct GuillotinePacker {
-    config: PackerConfig,
+    page_config: PageConfig,
     free: Vec<Rect>,
     used: Vec<Rect>,
     choice: GuillotineChoice,
@@ -13,10 +13,10 @@ pub struct GuillotinePacker {
 }
 
 impl GuillotinePacker {
-    pub fn new(config: PackerConfig, choice: GuillotineChoice, split: GuillotineSplit) -> Self {
-        let border = PackingContext::new(&config).usable_area();
+    pub fn new(page_config: PageConfig, choice: GuillotineChoice, split: GuillotineSplit) -> Self {
+        let border = usable_area(&page_config);
         Self {
-            config,
+            page_config,
             free: vec![border],
             used: Vec::new(),
             choice,
@@ -39,7 +39,7 @@ impl GuillotinePacker {
                     best_rot = false;
                 }
             }
-            if self.config.allow_rotation && fr.w >= h && fr.h >= w {
+            if self.page_config.allow_rotation() && fr.w >= h && fr.h >= w {
                 let s = guillotine_score(&self.choice, fr, h, w).0;
                 if s < best_score {
                     best_score = s;
@@ -78,13 +78,15 @@ impl GuillotinePacker {
 
 impl<K: Clone> Packer<K> for GuillotinePacker {
     fn can_pack(&self, rect: &Rect) -> bool {
-        let geometry = PlacementGeometry::new(rect, &self.config);
+        let Some(geometry) = PlacementGeometry::new(rect, &self.page_config) else {
+            return false;
+        };
         self.choose(geometry.reserved_w, geometry.reserved_h)
             .is_some()
     }
 
     fn pack(&mut self, key: K, rect: &Rect) -> Option<Frame<K>> {
-        let geometry = PlacementGeometry::new(rect, &self.config);
+        let geometry = PlacementGeometry::new(rect, &self.page_config)?;
         if let Some((idx, place, rotated)) = self.choose(geometry.reserved_w, geometry.reserved_h) {
             self.place(idx, &place);
             Some(geometry.frame(key, *rect, &place, rotated))

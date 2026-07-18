@@ -1,4 +1,4 @@
-use tex_packer_core::config::{AlgorithmFamily, MaxRectsHeuristic, PackerConfig, SortOrder};
+use tex_packer_core::config::{MaxRectsHeuristic, PageConfig};
 use tex_packer_core::model::{Frame, Rect};
 use tex_packer_core::packer::Packer;
 use tex_packer_core::packer::maxrects::MaxRectsPacker;
@@ -22,35 +22,14 @@ fn disjoint(frames: &[Frame]) -> bool {
     true
 }
 
-fn cfg() -> PackerConfig {
-    PackerConfig {
-        max_width: 512,
-        max_height: 512,
-        allow_rotation: true,
-        force_max_dimensions: false,
-        border_padding: 0,
-        texture_padding: 0,
-        texture_extrusion: 0,
-        trim: false,
-        trim_threshold: 0,
-        texture_outlines: false,
-        power_of_two: false,
-        square: false,
-        use_waste_map: false,
-        family: AlgorithmFamily::MaxRects,
-        mr_heuristic: MaxRectsHeuristic::BestAreaFit,
-        skyline_heuristic: tex_packer_core::config::SkylineHeuristic::BottomLeft,
-        g_choice: tex_packer_core::config::GuillotineChoice::BestAreaFit,
-        g_split: tex_packer_core::config::GuillotineSplit::SplitShorterLeftoverAxis,
-        auto_mode: tex_packer_core::config::AutoMode::Quality,
-        sort_order: SortOrder::AreaDesc,
-        time_budget_ms: None,
-        parallel: false,
-        mr_reference: false,
-        auto_mr_ref_time_ms_threshold: None,
-        auto_mr_ref_input_threshold: None,
-        transparent_policy: tex_packer_core::config::TransparentPolicy::Keep,
-    }
+fn cfg() -> PageConfig {
+    PageConfig::builder()
+        .max_dimensions(512, 512)
+        .allow_rotation(true)
+        .texture_padding(0)
+        .texture_extrusion(0)
+        .build()
+        .expect("valid page config")
 }
 
 #[test]
@@ -66,7 +45,7 @@ fn maxrects_repeatable_and_disjoint() {
         rects.push((w, h));
     }
 
-    let mut p1 = MaxRectsPacker::new(cfg.clone(), MaxRectsHeuristic::BestAreaFit);
+    let mut p1 = MaxRectsPacker::new(cfg.clone(), MaxRectsHeuristic::BestAreaFit, false);
     let mut f1: Vec<Frame> = Vec::new();
     for (i, (w, h)) in rects.iter().cloned().enumerate() {
         let r = Rect::new(0, 0, w, h);
@@ -78,7 +57,7 @@ fn maxrects_repeatable_and_disjoint() {
     }
     // Note: disjointness invariants are covered by integration tests; here we only ensure determinism.
 
-    let mut p2 = MaxRectsPacker::new(cfg.clone(), MaxRectsHeuristic::BestAreaFit);
+    let mut p2 = MaxRectsPacker::new(cfg, MaxRectsHeuristic::BestAreaFit, false);
     let mut f2: Vec<Frame> = Vec::new();
     for (i, (w, h)) in rects.iter().cloned().enumerate() {
         let r = Rect::new(0, 0, w, h);

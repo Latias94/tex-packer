@@ -1,4 +1,4 @@
-use tex_packer_core::config::{AlgorithmFamily, PackerConfig, SkylineHeuristic, SortOrder};
+use tex_packer_core::config::{PageConfig, SkylineHeuristic};
 use tex_packer_core::model::{Frame, Rect};
 use tex_packer_core::packer::Packer;
 use tex_packer_core::packer::skyline::SkylinePacker;
@@ -28,35 +28,14 @@ fn disjoint(frames: &[Frame]) -> bool {
     true
 }
 
-fn make_cfg(use_waste_map: bool) -> PackerConfig {
-    PackerConfig {
-        max_width: 2048,
-        max_height: 2048,
-        allow_rotation: true,
-        force_max_dimensions: false,
-        border_padding: 0,
-        texture_padding: 0,
-        texture_extrusion: 0,
-        trim: false,
-        trim_threshold: 0,
-        texture_outlines: false,
-        power_of_two: false,
-        square: false,
-        use_waste_map,
-        family: AlgorithmFamily::Skyline,
-        mr_heuristic: tex_packer_core::config::MaxRectsHeuristic::BestAreaFit,
-        skyline_heuristic: SkylineHeuristic::MinWaste,
-        g_choice: tex_packer_core::config::GuillotineChoice::BestAreaFit,
-        g_split: tex_packer_core::config::GuillotineSplit::SplitShorterLeftoverAxis,
-        auto_mode: tex_packer_core::config::AutoMode::Quality,
-        sort_order: SortOrder::AreaDesc,
-        time_budget_ms: None,
-        parallel: false,
-        mr_reference: false,
-        auto_mr_ref_time_ms_threshold: None,
-        auto_mr_ref_input_threshold: None,
-        transparent_policy: tex_packer_core::config::TransparentPolicy::Keep,
-    }
+fn page_config() -> PageConfig {
+    PageConfig::builder()
+        .max_dimensions(2048, 2048)
+        .allow_rotation(true)
+        .texture_padding(0)
+        .texture_extrusion(0)
+        .build()
+        .expect("valid page config")
 }
 
 #[test]
@@ -73,8 +52,8 @@ fn skyline_waste_map_improves_or_equal_occupancy() {
     }
 
     // pack without waste map
-    let cfg_plain = make_cfg(false);
-    let mut pack_plain = SkylinePacker::new(cfg_plain.clone());
+    let cfg_plain = page_config();
+    let mut pack_plain = SkylinePacker::new(cfg_plain.clone(), SkylineHeuristic::MinWaste, false);
     let mut frames_plain: Vec<Frame> = Vec::new();
     for (idx, (w, h)) in rects.iter().cloned().enumerate() {
         let r = Rect::new(0, 0, w, h);
@@ -88,7 +67,7 @@ fn skyline_waste_map_improves_or_equal_occupancy() {
     }
     assert!(disjoint(&frames_plain));
     let used_plain = area_of_frames(&frames_plain) as f64;
-    let page_area = (cfg_plain.max_width as u64 * cfg_plain.max_height as u64) as f64;
+    let page_area = (cfg_plain.max_width() as u64 * cfg_plain.max_height() as u64) as f64;
     let occ_plain = if page_area > 0.0 {
         used_plain / page_area
     } else {
@@ -96,8 +75,8 @@ fn skyline_waste_map_improves_or_equal_occupancy() {
     };
 
     // pack with waste map
-    let cfg_waste = make_cfg(true);
-    let mut pack_waste = SkylinePacker::new(cfg_waste.clone());
+    let cfg_waste = page_config();
+    let mut pack_waste = SkylinePacker::new(cfg_waste, SkylineHeuristic::MinWaste, true);
     let mut frames_waste: Vec<Frame> = Vec::new();
     for (idx, (w, h)) in rects.iter().cloned().enumerate() {
         let r = Rect::new(0, 0, w, h);

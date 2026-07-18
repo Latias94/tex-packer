@@ -1,11 +1,9 @@
 use super::Packer;
-use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig, SkylineHeuristic};
+use crate::config::{GuillotineChoice, GuillotineSplit, PageConfig, SkylineHeuristic};
 use crate::free_space::{
     guillotine_score, merge_adjacent, prune_contained, subtract_intersections,
 };
-use crate::geometry::{
-    PackingContext, PlacementGeometry, contains_rect, right_ex_u32, span_end_ex,
-};
+use crate::geometry::{PlacementGeometry, contains_rect, right_ex_u32, span_end_ex, usable_area};
 use crate::model::{Frame, Rect};
 
 #[derive(Clone, Copy, Debug)]
@@ -31,7 +29,7 @@ impl SkylineNode {
 }
 
 pub struct SkylinePacker {
-    config: PackerConfig,
+    page_config: PageConfig,
     border: Rect,
     skylines: Vec<SkylineNode>,
     heuristic: SkylineHeuristic,
@@ -39,23 +37,24 @@ pub struct SkylinePacker {
 }
 
 impl SkylinePacker {
-    pub fn new(config: PackerConfig) -> Self {
-        let usable = PackingContext::new(&config).usable_area();
+    pub fn new(page_config: PageConfig, heuristic: SkylineHeuristic, use_waste_map: bool) -> Self {
+        let usable = usable_area(&page_config);
+        let allow_rotation = page_config.allow_rotation();
         Self {
-            config: config.clone(),
+            page_config,
             border: usable,
             skylines: vec![SkylineNode {
                 x: usable.x,
                 y: usable.y,
                 w: usable.w,
             }],
-            heuristic: config.skyline_heuristic.clone(),
-            waste: if config.use_waste_map {
+            heuristic,
+            waste: if use_waste_map {
                 Some(WasteMap::new(
                     usable,
-                    config.allow_rotation,
-                    config.g_choice.clone(),
-                    config.g_split.clone(),
+                    allow_rotation,
+                    GuillotineChoice::default(),
+                    GuillotineSplit::default(),
                 ))
             } else {
                 None
@@ -107,7 +106,7 @@ impl SkylinePacker {
                 best_rect = r;
                 best_rot = false;
             }
-            if self.config.allow_rotation
+            if self.page_config.allow_rotation()
                 && let Some(r) = self.can_put(i, h, w)
                 && (r.bottom() < best_bottom
                     || (r.bottom() == best_bottom && self.skylines[i].w < best_width))
@@ -156,7 +155,7 @@ impl SkylinePacker {
                     best_rot = false;
                 }
             }
-            if self.config.allow_rotation
+            if self.page_config.allow_rotation()
                 && let Some(r) = self.can_put(i, h, w)
             {
                 let waste = self.wasted_area_for(i, &r);
@@ -249,8 +248,7 @@ mod tests {
 
     #[test]
     fn merge_does_not_bridge_gaps() {
-        let cfg = PackerConfig::default();
-        let mut p = SkylinePacker::new(cfg);
+        let mut p = SkylinePacker::new(PageConfig::default(), SkylineHeuristic::default(), false);
         // Two nodes at y=10 separated by a raised segment at y=20
         p.debug_set_nodes(&[(0, 10, 10), (12, 20, 2), (14, 10, 6)]);
         p.debug_merge();
@@ -264,7 +262,9 @@ mod tests {
 
 impl<K: Clone> Packer<K> for SkylinePacker {
     fn can_pack(&self, rect: &Rect) -> bool {
-        let geometry = PlacementGeometry::new(rect, &self.config);
+        let Some(geometry) = PlacementGeometry::new(rect, &self.page_config) else {
+            return false;
+        };
         if let Some(wm) = &self.waste
             && wm.can_fit(geometry.reserved_w, geometry.reserved_h)
         {
@@ -275,7 +275,7 @@ impl<K: Clone> Packer<K> for SkylinePacker {
     }
 
     fn pack(&mut self, key: K, rect: &Rect) -> Option<Frame<K>> {
-        let geometry = PlacementGeometry::new(rect, &self.config);
+        let geometry = PlacementGeometry::new(rect, &self.page_config)?;
 
         // Try waste map first
         if let Some(wm) = &mut self.waste

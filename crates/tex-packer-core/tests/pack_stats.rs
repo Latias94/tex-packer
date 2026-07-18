@@ -3,16 +3,7 @@ use tex_packer_core::prelude::*;
 
 #[test]
 fn test_pack_stats_basic() {
-    let cfg = PackerConfig {
-        max_width: 256,
-        max_height: 256,
-        border_padding: 0,
-        texture_padding: 0,
-        texture_extrusion: 0,
-        trim: false,
-        family: AlgorithmFamily::Skyline,
-        ..Default::default()
-    };
+    let cfg = offline_config(page_config(256, 256, true, 0, 0), false, false);
 
     // Create 4 unique textures of 64x64 each
     let mut inputs = Vec::new();
@@ -51,17 +42,7 @@ fn test_pack_stats_basic() {
 
 #[test]
 fn test_pack_stats_with_rotation() {
-    let cfg = PackerConfig {
-        max_width: 128,
-        max_height: 128,
-        allow_rotation: true,
-        border_padding: 0,
-        texture_padding: 0,
-        texture_extrusion: 0,
-        trim: false,
-        family: AlgorithmFamily::Skyline,
-        ..Default::default()
-    };
+    let cfg = offline_config(page_config(128, 128, true, 0, 0), false, false);
 
     // Create some rectangular textures that might benefit from rotation
     let mut inputs = Vec::new();
@@ -85,17 +66,7 @@ fn test_pack_stats_with_rotation() {
 
 #[test]
 fn test_pack_stats_with_trimming() {
-    let cfg = PackerConfig {
-        max_width: 256,
-        max_height: 256,
-        trim: true,
-        trim_threshold: 0,
-        border_padding: 0,
-        texture_padding: 0,
-        texture_extrusion: 0,
-        family: AlgorithmFamily::Skyline,
-        ..Default::default()
-    };
+    let cfg = offline_config(page_config(256, 256, true, 0, 0), true, false);
 
     // Create images with transparent borders
     let mut inputs = Vec::new();
@@ -127,11 +98,14 @@ fn test_pack_stats_with_trimming() {
 
 #[test]
 fn test_pack_stats_summary() {
-    let cfg = PackerConfig {
-        max_width: 128,
-        max_height: 128,
-        ..Default::default()
-    };
+    let page = PageConfig::builder()
+        .max_dimensions(128, 128)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .build()
+        .expect("valid offline config");
 
     let img = DynamicImage::ImageRgba8(RgbaImage::new(32, 32));
     let inputs = vec![InputImage {
@@ -153,17 +127,7 @@ fn test_pack_stats_summary() {
 
 #[test]
 fn test_pack_stats_wasted_area() {
-    let cfg = PackerConfig {
-        max_width: 256,
-        max_height: 256,
-        border_padding: 0,
-        texture_padding: 0,
-        texture_extrusion: 0,
-        trim: false,
-        force_max_dimensions: true, // Force full page size
-        family: AlgorithmFamily::Skyline,
-        ..Default::default()
-    };
+    let cfg = offline_config(page_config(256, 256, true, 0, 0), false, true);
 
     // Single small texture in large atlas
     let img = DynamicImage::ImageRgba8(RgbaImage::new(32, 32));
@@ -196,11 +160,14 @@ fn test_pack_stats_wasted_area() {
 
 #[test]
 fn test_pack_stats_layout_only() {
-    let cfg = PackerConfig {
-        max_width: 256,
-        max_height: 256,
-        ..Default::default()
-    };
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .build()
+        .expect("valid offline config");
 
     let inputs = vec![("a", 32, 32), ("b", 64, 64), ("c", 48, 48)];
 
@@ -220,16 +187,7 @@ fn test_pack_stats_layout_only() {
 
 #[test]
 fn test_pack_stats_multiple_pages() {
-    let cfg = PackerConfig {
-        max_width: 128,
-        max_height: 128,
-        border_padding: 0,
-        texture_padding: 0,
-        texture_extrusion: 0,
-        trim: false,
-        family: AlgorithmFamily::Skyline,
-        ..Default::default()
-    };
+    let cfg = offline_config(page_config(128, 128, true, 0, 0), false, false);
 
     // Create many textures to force multiple pages
     let mut inputs = Vec::new();
@@ -294,4 +252,33 @@ fn test_pack_stats_empty_atlas() {
     assert_eq!(stats.used_region_area, 0);
     assert_eq!(stats.occupancy, 0.0);
     assert_eq!(stats.wasted_area(), 0);
+}
+
+fn page_config(
+    width: u32,
+    height: u32,
+    allow_rotation: bool,
+    texture_padding: u32,
+    texture_extrusion: u32,
+) -> PageConfig {
+    PageConfig::builder()
+        .max_dimensions(width, height)
+        .allow_rotation(allow_rotation)
+        .texture_padding(texture_padding)
+        .texture_extrusion(texture_extrusion)
+        .build()
+        .expect("valid page config")
+}
+
+fn offline_config(page: PageConfig, trim: bool, force_max_dimensions: bool) -> OfflineConfig {
+    OfflineConfig::builder()
+        .page_config(page)
+        .trim(trim)
+        .force_max_dimensions(force_max_dimensions)
+        .strategy(PackingStrategy::Skyline {
+            heuristic: SkylineHeuristic::BottomLeft,
+            use_waste_map: false,
+        })
+        .build()
+        .expect("valid offline config")
 }

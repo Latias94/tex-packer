@@ -5,10 +5,9 @@ mod skyline;
 use self::guillotine::RuntimeGuillotine;
 use self::shelf::RuntimeShelfPlacement;
 use self::skyline::RuntimeSkyline;
-use crate::config::PackerConfig;
-use crate::geometry::PackingContext;
+use crate::config::{PageConfig, RuntimeStrategy};
+use crate::geometry::usable_area;
 use crate::model::{Frame, Rect};
-use crate::runtime::RuntimeStrategy;
 use std::collections::HashMap;
 
 pub(crate) struct RuntimePage {
@@ -66,14 +65,13 @@ impl RuntimePage {
         id: usize,
         width: u32,
         height: u32,
-        cfg: &PackerConfig,
+        page_config: &PageConfig,
         strategy: &RuntimeStrategy,
     ) -> Self {
-        let ctx = PackingContext::new(cfg);
-        let usable = if ctx.max_dimensions() == (width, height) {
-            ctx.usable_area()
+        let usable = if page_config.max_dimensions() == (width, height) {
+            usable_area(page_config)
         } else {
-            let pad = ctx.border_padding();
+            let pad = page_config.border_padding();
             Rect::new(
                 pad,
                 pad,
@@ -82,14 +80,14 @@ impl RuntimePage {
             )
         };
         let placement = match strategy {
-            RuntimeStrategy::Guillotine => {
-                RuntimePlacement::Guillotine(RuntimeGuillotine::new(usable, cfg))
+            RuntimeStrategy::Guillotine { choice, split } => {
+                RuntimePlacement::Guillotine(RuntimeGuillotine::new(usable, *choice, *split))
             }
-            RuntimeStrategy::Shelf(policy) => {
+            RuntimeStrategy::Shelf { policy } => {
                 RuntimePlacement::Shelf(RuntimeShelfPlacement::new(usable, *policy))
             }
-            RuntimeStrategy::Skyline(heuristic) => {
-                RuntimePlacement::Skyline(RuntimeSkyline::new(usable, heuristic.clone()))
+            RuntimeStrategy::Skyline { heuristic } => {
+                RuntimePlacement::Skyline(RuntimeSkyline::new(usable, *heuristic))
             }
         };
         Self {
@@ -97,7 +95,7 @@ impl RuntimePage {
             width,
             height,
             used: HashMap::new(),
-            allow_rotation: cfg.allow_rotation,
+            allow_rotation: page_config.allow_rotation(),
             placement,
         }
     }

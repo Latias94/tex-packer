@@ -3,11 +3,9 @@ use crate::config::{
     PageConfig, SkylineHeuristic,
 };
 use crate::error::{Result, TexPackerError};
-use crate::geometry::{bottom_ex_u32, right_ex_u32};
+use crate::geometry::{ContentSize, PhysicalPlacement, bottom_ex_u32, right_ex_u32};
 use crate::model::{Atlas, Frame, Meta, Page, Rect};
-use crate::packer::{
-    Packer, guillotine::GuillotinePacker, maxrects::MaxRectsPacker, skyline::SkylinePacker,
-};
+use crate::packer::PlacementEngine;
 use crate::packing_plan::PackingPlan;
 use crate::preparation::{PreparedItem, prepare_images, prepare_layout, prepare_layout_items};
 use image::{DynamicImage, RgbaImage};
@@ -67,7 +65,8 @@ pub fn pack_images(inputs: Vec<InputImage>, config: OfflineConfig) -> Result<Pac
 struct PackedRegion {
     canonical_item_index: usize,
     alias_item_indices: Vec<usize>,
-    frame: Rect,
+    content: Rect,
+    allocation: Rect,
     rotated: bool,
 }
 
@@ -76,7 +75,7 @@ impl PackedRegion {
         let item = &prepared[item_index];
         Frame {
             key: item.key.clone(),
-            frame: self.frame,
+            frame: self.content,
             rotated: self.rotated,
             trimmed: item.trimmed,
             source: item.source,
@@ -122,7 +121,6 @@ impl PackedPage {
 struct PageSizing {
     max_dimensions: (u32, u32),
     border_padding: u32,
-    trailing_extra: u32,
     force_max_dimensions: bool,
     power_of_two: bool,
     square: bool,
@@ -134,31 +132,23 @@ impl PageSizing {
         Self {
             max_dimensions: page.max_dimensions(),
             border_padding: page.border_padding(),
-            trailing_extra: page.trailing_extra(),
             force_max_dimensions: config.force_max_dimensions(),
             power_of_two: config.power_of_two(),
             square: config.square(),
         }
     }
 
-    fn compute(self, frames: &[Frame]) -> (u32, u32) {
+    fn compute(self, regions: &[PackedRegion]) -> (u32, u32) {
         if self.force_max_dimensions {
             return self.max_dimensions;
         }
 
         let mut width = 0;
         let mut height = 0;
-        for frame in frames {
-            width = width.max(
-                right_ex_u32(&frame.frame)
-                    .saturating_add(self.trailing_extra)
-                    .saturating_add(self.border_padding),
-            );
-            height = height.max(
-                bottom_ex_u32(&frame.frame)
-                    .saturating_add(self.trailing_extra)
-                    .saturating_add(self.border_padding),
-            );
+        for region in regions {
+            width = width.max(right_ex_u32(&region.allocation).saturating_add(self.border_padding));
+            height =
+                height.max(bottom_ex_u32(&region.allocation).saturating_add(self.border_padding));
         }
 
         if self.power_of_two {
@@ -308,7 +298,7 @@ fn pack_pages_for_strategy<T>(
     let mut page_id = 0usize;
 
     while !remaining.is_empty() {
-        let mut packer = create_packer(page_config, strategy)?;
+        let mut engine = create_engine(page_config, strategy)?;
         let mut regions: Vec<PackedRegion> = Vec::new();
 
         loop {
@@ -317,15 +307,18 @@ fn pack_pages_for_strategy<T>(
             for &group_index in &remaining {
                 let group = plan.group(group_index);
                 let item = &prepared[group.canonical_item_index()];
-                if !packer.can_pack(&item.rect) {
-                    continue;
-                }
-                if let Some(frame) = packer.pack(item.key.clone(), &item.rect) {
+                if let Some(PhysicalPlacement {
+                    content,
+                    allocation,
+                    rotated,
+                }) = engine.try_place(ContentSize::new(item.rect.w, item.rect.h))
+                {
                     regions.push(PackedRegion {
                         canonical_item_index: group.canonical_item_index(),
                         alias_item_indices: group.alias_item_indices().to_vec(),
-                        frame: frame.frame,
-                        rotated: frame.rotated,
+                        content,
+                        allocation,
+                        rotated,
                     });
                     remove_set.insert(group_index);
                     placed_any = true;
@@ -352,11 +345,7 @@ fn pack_pages_for_strategy<T>(
             });
         }
 
-        let physical_frames = regions
-            .iter()
-            .map(|region| region.logical_frame(prepared, region.canonical_item_index))
-            .collect::<Vec<_>>();
-        let (page_w, page_h) = page_sizing.compute(&physical_frames);
+        let (page_w, page_h) = page_sizing.compute(&regions);
 
         pages.push(PackedPage {
             id: page_id,
@@ -370,37 +359,12 @@ fn pack_pages_for_strategy<T>(
     Ok(pages)
 }
 
-fn create_packer(
-    page_config: &PageConfig,
-    strategy: &PackingStrategy,
-) -> Result<Box<dyn Packer<String>>> {
-    let packer: Box<dyn Packer<String>> = match *strategy {
-        PackingStrategy::Skyline {
-            heuristic,
-            use_waste_map,
-        } => Box::new(SkylinePacker::new(
-            page_config.clone(),
-            heuristic,
-            use_waste_map,
-        )),
-        PackingStrategy::MaxRects {
-            heuristic,
-            reference,
-        } => Box::new(MaxRectsPacker::new(
-            page_config.clone(),
-            heuristic,
-            reference,
-        )),
-        PackingStrategy::Guillotine { choice, split } => {
-            Box::new(GuillotinePacker::new(page_config.clone(), choice, split))
-        }
-        PackingStrategy::Auto { .. } => {
-            return Err(TexPackerError::InvalidConfig(
-                "Auto must resolve to a concrete packing strategy before placement".into(),
-            ));
-        }
-    };
-    Ok(packer)
+fn create_engine(page_config: &PageConfig, strategy: &PackingStrategy) -> Result<PlacementEngine> {
+    PlacementEngine::from_strategy(page_config, strategy).ok_or_else(|| {
+        TexPackerError::InvalidConfig(
+            "Auto must resolve to a concrete packing strategy before placement".into(),
+        )
+    })
 }
 
 fn render_output_page(
@@ -413,10 +377,10 @@ fn render_output_page(
     for region in &packed_page.regions {
         let prep = &prepared[region.canonical_item_index];
         let dst = crate::compositing::BlitRect::new(
-            region.frame.x,
-            region.frame.y,
-            region.frame.w,
-            region.frame.h,
+            region.content.x,
+            region.content.y,
+            region.content.w,
+            region.content.h,
         );
         let src = crate::compositing::BlitRect::new(
             prep.source.x,

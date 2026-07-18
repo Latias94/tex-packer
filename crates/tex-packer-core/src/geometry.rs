@@ -79,26 +79,44 @@ pub(crate) fn overlap_1d(a_start: u32, a_end_ex: u32, b_start: u32, b_end_ex: u3
     a_end_ex.min(b_end_ex).saturating_sub(a_start.max(b_start))
 }
 
-/// Geometry derived from source content and packing configuration.
-///
-/// The reserved size is the rectangle consumed by the packing algorithm. It includes
-/// frame content, texture padding, and extrusion. The public frame rectangle remains
-/// the visible content area inside that reserved slot.
+/// Normalized visible dimensions accepted by the physical placement engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlacementGeometry {
-    pub reserved_w: u32,
-    pub reserved_h: u32,
+pub(crate) struct ContentSize {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
+impl ContentSize {
+    pub(crate) fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+}
+
+/// Authoritative physical geometry produced by one successful placement attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PhysicalPlacement {
+    pub(crate) content: Rect,
+    pub(crate) allocation: Rect,
+    pub(crate) rotated: bool,
+}
+
+/// Geometry derived from content dimensions and validated page configuration.
+///
+/// The reserved size includes visible content, texture padding, and extrusion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlacementGeometry {
+    pub(crate) reserved_w: u32,
+    pub(crate) reserved_h: u32,
     content_w: u32,
     content_h: u32,
     offset: u32,
+    trailing_extra: u32,
 }
 
 impl PlacementGeometry {
-    pub fn new(content: &Rect, config: &PageConfig) -> Option<Self> {
-        Self::from_size(content.w, content.h, config)
-    }
-
-    pub fn from_size(content_w: u32, content_h: u32, config: &PageConfig) -> Option<Self> {
+    pub(crate) fn new(content: ContentSize, config: &PageConfig) -> Option<Self> {
+        let content_w = content.width;
+        let content_h = content.height;
         let (reserved_w, reserved_h) = config.checked_reservation(content_w, content_h)?;
         Some(Self {
             reserved_w,
@@ -106,10 +124,23 @@ impl PlacementGeometry {
             content_w,
             content_h,
             offset: config.content_offset(),
+            trailing_extra: config.trailing_extra(),
         })
     }
 
-    pub fn rotated_content_size(&self, rotated: bool) -> (u32, u32) {
+    pub(crate) fn reserved_size(self) -> (u32, u32) {
+        (self.reserved_w, self.reserved_h)
+    }
+
+    pub(crate) fn from_size(
+        content_width: u32,
+        content_height: u32,
+        config: &PageConfig,
+    ) -> Option<Self> {
+        Self::new(ContentSize::new(content_width, content_height), config)
+    }
+
+    fn rotated_content_size(self, rotated: bool) -> (u32, u32) {
         if rotated {
             (self.content_h, self.content_w)
         } else {
@@ -117,20 +148,43 @@ impl PlacementGeometry {
         }
     }
 
-    pub fn frame_rect(&self, reserved_slot: &Rect, rotated: bool) -> Rect {
+    fn content_rect(self, allocation: Rect, rotated: bool) -> Rect {
         let (frame_w, frame_h) = self.rotated_content_size(rotated);
-        Rect::new(
-            reserved_slot.x.saturating_add(self.offset),
-            reserved_slot.y.saturating_add(self.offset),
+        let content = Rect::new(
+            allocation.x.saturating_add(self.offset),
+            allocation.y.saturating_add(self.offset),
             frame_w,
             frame_h,
-        )
+        );
+        debug_assert_eq!(
+            allocation.w as u64,
+            content.w as u64 + self.offset as u64 + self.trailing_extra as u64
+        );
+        debug_assert_eq!(
+            allocation.h as u64,
+            content.h as u64 + self.offset as u64 + self.trailing_extra as u64
+        );
+        content
     }
 
-    pub fn frame<K>(&self, key: K, source: Rect, reserved_slot: &Rect, rotated: bool) -> Frame<K> {
+    pub(crate) fn complete(self, allocation: Rect, rotated: bool) -> PhysicalPlacement {
+        PhysicalPlacement {
+            content: self.content_rect(allocation, rotated),
+            allocation,
+            rotated,
+        }
+    }
+
+    pub(crate) fn frame<K>(
+        self,
+        key: K,
+        source: Rect,
+        allocation: &Rect,
+        rotated: bool,
+    ) -> Frame<K> {
         Frame {
             key,
-            frame: self.frame_rect(reserved_slot, rotated),
+            frame: self.content_rect(*allocation, rotated),
             rotated,
             trimmed: false,
             source,

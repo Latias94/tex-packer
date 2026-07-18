@@ -1,13 +1,12 @@
-use super::Packer;
 use crate::config::{MaxRectsHeuristic, PageConfig};
 use crate::free_space::{prune_contained, subtract_intersections};
 use crate::geometry::{
-    PlacementGeometry, area_fit_score, bottom_ex_u32, contains_rect, intersects, overlap_1d,
-    right_ex_u32, usable_area,
+    ContentSize, PhysicalPlacement, PlacementGeometry, area_fit_score, bottom_ex_u32,
+    contains_rect, intersects, overlap_1d, right_ex_u32, usable_area,
 };
-use crate::model::{Frame, Rect};
+use crate::model::Rect;
 
-pub struct MaxRectsPacker {
+pub(super) struct MaxRectsPacker {
     page_config: PageConfig,
     border: Rect,
     free: Vec<Rect>,
@@ -17,7 +16,11 @@ pub struct MaxRectsPacker {
 }
 
 impl MaxRectsPacker {
-    pub fn new(page_config: PageConfig, heuristic: MaxRectsHeuristic, reference: bool) -> Self {
+    pub(super) fn new(
+        page_config: PageConfig,
+        heuristic: MaxRectsHeuristic,
+        reference: bool,
+    ) -> Self {
         let border = usable_area(&page_config);
         Self {
             page_config,
@@ -256,28 +259,100 @@ impl MaxRectsPacker {
         score
     }
 
-    pub fn free_list_len(&self) -> usize {
-        self.free.len()
+    pub(super) fn try_place(&mut self, content: ContentSize) -> Option<PhysicalPlacement> {
+        let geometry = PlacementGeometry::new(content, &self.page_config)?;
+        let (reserved_w, reserved_h) = geometry.reserved_size();
+        let (allocation, rotated) = self.find_position(reserved_w, reserved_h)?;
+        self.place_rect(&allocation);
+        Some(geometry.complete(allocation, rotated))
     }
 }
 
-impl<K: Clone> Packer<K> for MaxRectsPacker {
-    fn can_pack(&self, rect: &Rect) -> bool {
-        let Some(geometry) = PlacementGeometry::new(rect, &self.page_config) else {
-            return false;
-        };
-        self.find_position(geometry.reserved_w, geometry.reserved_h)
-            .is_some()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geometry::intersects;
+    use rand::{Rng, SeedableRng};
+
+    fn page_config(width: u32, height: u32) -> PageConfig {
+        PageConfig::builder()
+            .max_dimensions(width, height)
+            .allow_rotation(true)
+            .texture_padding(0)
+            .texture_extrusion(0)
+            .build()
+            .expect("valid test page")
     }
 
-    fn pack(&mut self, key: K, rect: &Rect) -> Option<Frame<K>> {
-        let geometry = PlacementGeometry::new(rect, &self.page_config)?;
-        if let Some((place, rotated)) = self.find_position(geometry.reserved_w, geometry.reserved_h)
-        {
-            self.place_rect(&place);
-            Some(geometry.frame(key, *rect, &place, rotated))
-        } else {
-            None
+    #[test]
+    fn rotates_when_only_rotated_allocation_fits() {
+        let mut engine =
+            MaxRectsPacker::new(page_config(16, 12), MaxRectsHeuristic::BestAreaFit, false);
+        let placement = engine
+            .try_place(ContentSize::new(8, 14))
+            .expect("rotated allocation should fit");
+        assert!(placement.rotated);
+        assert_eq!((placement.content.w, placement.content.h), (14, 8));
+        assert_eq!((placement.allocation.w, placement.allocation.h), (14, 8));
+    }
+
+    #[test]
+    fn failed_search_does_not_change_free_or_used_state() {
+        let mut engine =
+            MaxRectsPacker::new(page_config(16, 12), MaxRectsHeuristic::BestAreaFit, false);
+        let free_before = engine.free.clone();
+        let used_before = engine.used.clone();
+        assert!(engine.try_place(ContentSize::new(17, 13)).is_none());
+        assert_eq!(engine.free, free_before);
+        assert_eq!(engine.used, used_before);
+    }
+
+    #[test]
+    fn successful_search_commits_exactly_one_used_allocation() {
+        for reference in [false, true] {
+            let mut engine = MaxRectsPacker::new(
+                page_config(32, 32),
+                MaxRectsHeuristic::BestAreaFit,
+                reference,
+            );
+            let placement = engine
+                .try_place(ContentSize::new(7, 5))
+                .expect("allocation should fit");
+            assert_eq!(engine.used, vec![placement.allocation]);
+        }
+    }
+
+    #[test]
+    fn placements_are_repeatable_and_disjoint() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        let sizes = (0..120)
+            .map(|_| ContentSize::new(rng.gen_range(4..=64), rng.gen_range(4..=64)))
+            .collect::<Vec<_>>();
+
+        for reference in [false, true] {
+            let config = page_config(512, 512);
+            let mut first =
+                MaxRectsPacker::new(config.clone(), MaxRectsHeuristic::BestAreaFit, reference);
+            let first_placements = sizes
+                .iter()
+                .copied()
+                .map_while(|size| first.try_place(size))
+                .collect::<Vec<_>>();
+
+            let mut repeated =
+                MaxRectsPacker::new(config, MaxRectsHeuristic::BestAreaFit, reference);
+            let repeated_placements = sizes
+                .iter()
+                .copied()
+                .map_while(|size| repeated.try_place(size))
+                .collect::<Vec<_>>();
+
+            assert_eq!(first_placements, repeated_placements);
+            for (index, first) in first_placements.iter().enumerate() {
+                for second in &first_placements[index + 1..] {
+                    assert!(!intersects(&first.allocation, &second.allocation));
+                }
+            }
         }
     }
 }

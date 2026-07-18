@@ -30,7 +30,7 @@ pub mod export_plist;
 mod free_space;
 mod geometry;
 pub mod model;
-pub mod packer;
+mod packer;
 mod packing_plan;
 pub mod pipeline;
 mod preparation;
@@ -44,7 +44,6 @@ pub use export::*;
 pub use export_manifest::{TemplateContext, TemplatePage, TemplateSprite, to_template_context};
 pub use export_plist::*;
 pub use model::*;
-pub use packer::*;
 pub use pipeline::*;
 pub use preparation::compute_trim_rect;
 

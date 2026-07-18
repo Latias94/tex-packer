@@ -272,7 +272,7 @@ impl MaxRectsPacker {
 mod tests {
     use super::*;
     use crate::geometry::intersects;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     fn page_config(width: u32, height: u32) -> PageConfig {
         PageConfig::builder()
@@ -326,7 +326,7 @@ mod tests {
     fn placements_are_repeatable_and_disjoint() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(42);
         let sizes = (0..120)
-            .map(|_| ContentSize::new(rng.gen_range(4..=64), rng.gen_range(4..=64)))
+            .map(|_| ContentSize::new(rng.random_range(4..=64), rng.random_range(4..=64)))
             .collect::<Vec<_>>();
 
         for reference in [false, true] {

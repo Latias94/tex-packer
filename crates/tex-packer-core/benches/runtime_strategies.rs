@@ -40,12 +40,12 @@ fn skyline_strategy(heuristic: SkylineHeuristic) -> RuntimeStrategy {
 }
 
 fn generate_textures(count: usize, min_size: u32, max_size: u32) -> Vec<(String, u32, u32)> {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
+    use rand::RngExt;
+    let mut rng = rand::rng();
     (0..count)
         .map(|i| {
-            let w = rng.gen_range(min_size..=max_size);
-            let h = rng.gen_range(min_size..=max_size);
+            let w = rng.random_range(min_size..=max_size);
+            let h = rng.random_range(min_size..=max_size);
             (format!("tex_{}", i), w, h)
         })
         .collect()

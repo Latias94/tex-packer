@@ -235,7 +235,7 @@ impl SkylinePacker {
 mod tests {
     use super::*;
     use crate::geometry::{PhysicalPlacement, intersects};
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     fn page_config(width: u32, height: u32, allow_rotation: bool) -> PageConfig {
         PageConfig::builder()
@@ -334,7 +334,7 @@ mod tests {
     fn waste_map_is_repeatable_disjoint_and_not_worse_than_plain_skyline() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(0xDEADBEEF);
         let sizes = (0..2000)
-            .map(|_| ContentSize::new(rng.gen_range(4..=128), rng.gen_range(4..=128)))
+            .map(|_| ContentSize::new(rng.random_range(4..=128), rng.random_range(4..=128)))
             .collect::<Vec<_>>();
         let config = page_config(2048, 2048, true);
 

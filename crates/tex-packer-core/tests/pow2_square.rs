@@ -1,4 +1,4 @@
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use tex_packer_core::config::{OfflineConfig, PageConfig};
 use tex_packer_core::model::{Atlas, Page};
 use tex_packer_core::offline::{LayoutItem, OfflinePacker};
@@ -144,8 +144,8 @@ fn random_no_overlap_pow2_square() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(2024);
     let mut items: Vec<(String, u32, u32)> = Vec::new();
     for i in 0..200u32 {
-        let w = rng.gen_range(1..=64);
-        let h = rng.gen_range(1..=64);
+        let w = rng.random_range(1..=64);
+        let h = rng.random_range(1..=64);
         items.push((format!("r{}", i), w, h));
     }
     let atlas = pack_layout(items, cfg.clone()).expect("pack");

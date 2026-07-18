@@ -1,7 +1,7 @@
 #![allow(unused_parens, unused_mut, clippy::manual_clamp)]
 
 use image::{Rgba, RgbaImage};
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use std::fs;
 use std::path::PathBuf;
 
@@ -119,24 +119,24 @@ fn main() -> anyhow::Result<()> {
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(0xC0FFEE);
     for i in 0..count {
-        let w: u32 = rng.gen_range(16..=256);
-        let h: u32 = rng.gen_range(16..=256);
+        let w: u32 = rng.random_range(16..=256);
+        let h: u32 = rng.random_range(16..=256);
         let mut img = RgbaImage::from_pixel(w, h, Rgba([0, 0, 0, 0]));
         // Random blotches: draw several rectangles/circles with varying alpha to create irregular shapes
-        let blotches = rng.gen_range(3..=10);
+        let blotches = rng.random_range(3..=10);
         for _ in 0..blotches {
-            let cx = rng.gen_range(0..w);
-            let cy = rng.gen_range(0..h);
-            let rw = rng.gen_range(4..=w.max(4).min(64));
-            let rh = rng.gen_range(4..=h.max(4).min(64));
+            let cx = rng.random_range(0..w);
+            let cy = rng.random_range(0..h);
+            let rw = rng.random_range(4..=w.max(4).min(64));
+            let rh = rng.random_range(4..=h.max(4).min(64));
             let color = Rgba([
-                rng.r#gen(),
-                rng.r#gen(),
-                rng.r#gen(),
-                rng.gen_range(96..=255),
+                rng.random(),
+                rng.random(),
+                rng.random(),
+                rng.random_range(96..=255),
             ]);
             // Mix between rect and ellipse
-            if rng.gen_bool(0.5) {
+            if rng.random_bool(0.5) {
                 let x1 = cx.saturating_sub(rw / 2);
                 let y1 = cy.saturating_sub(rh / 2);
                 let x2 = (cx + rw / 2).min(w - 1);

@@ -57,6 +57,11 @@ after a partial publication without accepting a foreign artifact. A crates.io
 publication is permanent; do not move or recreate a release tag after
 publication.
 
+Checksum-based resume applies to versions first published by this workflow with
+its pinned Linux toolchain. Historical versions packaged on another platform or
+with another Cargo version can produce a byte-different archive and will fail
+closed; verify those packages separately and do not bypass the checksum gate.
+
 ## Updating dist
 
 Install the `dist` version declared in `dist-workspace.toml`. Use the repository

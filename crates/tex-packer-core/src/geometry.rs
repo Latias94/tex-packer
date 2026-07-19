@@ -1,128 +1,10 @@
-use crate::config::PackerConfig;
-use crate::model::{Frame, Rect};
+use crate::config::PageConfig;
+use crate::model::Rect;
 
-/// Validated, derived geometry and page sizing context for a packing run.
-///
-/// This is intentionally crate-private: public callers still build `PackerConfig`,
-/// while internal modules use the precomputed invariants instead of recomputing
-/// border, padding, extrusion, and final page-size policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PackingContext {
-    max_width: u32,
-    max_height: u32,
-    border_padding: u32,
-    force_max_dimensions: bool,
-    power_of_two: bool,
-    square: bool,
-    usable: Rect,
-    reserved_extra: u32,
-    frame_offset: u32,
-    trailing_extra: u32,
-}
-
-impl PackingContext {
-    pub(crate) fn new(cfg: &PackerConfig) -> Self {
-        let border_padding = cfg.border_padding;
-        let usable = usable_area(cfg);
-        let reserved_extra = cfg
-            .texture_extrusion
-            .saturating_mul(2)
-            .saturating_add(cfg.texture_padding);
-        let frame_offset = cfg
-            .texture_extrusion
-            .saturating_add(cfg.texture_padding / 2);
-        let trailing_padding = cfg.texture_padding.saturating_sub(cfg.texture_padding / 2);
-        let trailing_extra = cfg.texture_extrusion.saturating_add(trailing_padding);
-
-        Self {
-            max_width: cfg.max_width,
-            max_height: cfg.max_height,
-            border_padding,
-            force_max_dimensions: cfg.force_max_dimensions,
-            power_of_two: cfg.power_of_two,
-            square: cfg.square,
-            usable,
-            reserved_extra,
-            frame_offset,
-            trailing_extra,
-        }
-    }
-
-    pub(crate) fn usable_area(&self) -> Rect {
-        self.usable
-    }
-
-    pub(crate) fn reserved_extra(&self) -> u32 {
-        self.reserved_extra
-    }
-
-    pub(crate) fn frame_offset(&self) -> u32 {
-        self.frame_offset
-    }
-
-    pub(crate) fn border_padding(&self) -> u32 {
-        self.border_padding
-    }
-
-    pub(crate) fn max_dimensions(&self) -> (u32, u32) {
-        (self.max_width, self.max_height)
-    }
-
-    pub(crate) fn compute_page_size(&self, frames: &[Frame]) -> (u32, u32) {
-        if self.force_max_dimensions {
-            return self.max_dimensions();
-        }
-
-        let mut page_w = 0u32;
-        let mut page_h = 0u32;
-        for frame in frames {
-            page_w = page_w.max(
-                right_ex_u32(&frame.frame)
-                    .saturating_add(self.trailing_extra)
-                    .saturating_add(self.border_padding),
-            );
-            page_h = page_h.max(
-                bottom_ex_u32(&frame.frame)
-                    .saturating_add(self.trailing_extra)
-                    .saturating_add(self.border_padding),
-            );
-        }
-
-        if self.power_of_two {
-            page_w = next_pow2(page_w.max(1));
-            page_h = next_pow2(page_h.max(1));
-        }
-        if self.square {
-            let m = page_w.max(page_h);
-            page_w = m;
-            page_h = m;
-        }
-
-        (page_w, page_h)
-    }
-}
-
-pub(crate) fn usable_area(cfg: &PackerConfig) -> Rect {
-    let pad = cfg.border_padding;
-    Rect::new(
-        pad,
-        pad,
-        cfg.max_width.saturating_sub(pad.saturating_mul(2)),
-        cfg.max_height.saturating_sub(pad.saturating_mul(2)),
-    )
-}
-
-fn next_pow2(mut v: u32) -> u32 {
-    if v <= 1 {
-        return 1;
-    }
-    v -= 1;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    v + 1
+pub(crate) fn usable_area(config: &PageConfig) -> Rect {
+    let padding = config.border_padding();
+    let (width, height) = config.usable_dimensions();
+    Rect::new(padding, padding, width, height)
 }
 
 /// Returns the exclusive right edge (`x + w`) as a widened integer.
@@ -197,40 +79,68 @@ pub(crate) fn overlap_1d(a_start: u32, a_end_ex: u32, b_start: u32, b_end_ex: u3
     a_end_ex.min(b_end_ex).saturating_sub(a_start.max(b_start))
 }
 
-/// Geometry derived from source content and packing configuration.
-///
-/// The reserved size is the rectangle consumed by the packing algorithm. It includes
-/// frame content, texture padding, and extrusion. The public frame rectangle remains
-/// the visible content area inside that reserved slot.
+/// Normalized visible dimensions accepted by the physical placement engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlacementGeometry {
-    pub reserved_w: u32,
-    pub reserved_h: u32,
+pub(crate) struct ContentSize {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
+impl ContentSize {
+    pub(crate) fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+}
+
+/// Authoritative physical geometry produced by one successful placement attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PhysicalPlacement {
+    pub(crate) content: Rect,
+    pub(crate) allocation: Rect,
+    pub(crate) rotated: bool,
+}
+
+/// Geometry derived from content dimensions and validated page configuration.
+///
+/// The reserved size includes visible content, texture padding, and extrusion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlacementGeometry {
+    pub(crate) reserved_w: u32,
+    pub(crate) reserved_h: u32,
     content_w: u32,
     content_h: u32,
     offset: u32,
+    trailing_extra: u32,
 }
 
 impl PlacementGeometry {
-    pub fn new(content: &Rect, cfg: &PackerConfig) -> Self {
-        Self::from_size(content.w, content.h, cfg)
-    }
-
-    pub fn from_size(content_w: u32, content_h: u32, cfg: &PackerConfig) -> Self {
-        Self::from_context(content_w, content_h, &PackingContext::new(cfg))
-    }
-
-    pub(crate) fn from_context(content_w: u32, content_h: u32, ctx: &PackingContext) -> Self {
-        Self {
-            reserved_w: content_w.saturating_add(ctx.reserved_extra()),
-            reserved_h: content_h.saturating_add(ctx.reserved_extra()),
+    pub(crate) fn new(content: ContentSize, config: &PageConfig) -> Option<Self> {
+        let content_w = content.width;
+        let content_h = content.height;
+        let (reserved_w, reserved_h) = config.checked_reservation(content_w, content_h)?;
+        Some(Self {
+            reserved_w,
+            reserved_h,
             content_w,
             content_h,
-            offset: ctx.frame_offset(),
-        }
+            offset: config.content_offset(),
+            trailing_extra: config.trailing_extra(),
+        })
     }
 
-    pub fn rotated_content_size(&self, rotated: bool) -> (u32, u32) {
+    pub(crate) fn reserved_size(self) -> (u32, u32) {
+        (self.reserved_w, self.reserved_h)
+    }
+
+    pub(crate) fn from_size(
+        content_width: u32,
+        content_height: u32,
+        config: &PageConfig,
+    ) -> Option<Self> {
+        Self::new(ContentSize::new(content_width, content_height), config)
+    }
+
+    fn rotated_content_size(self, rotated: bool) -> (u32, u32) {
         if rotated {
             (self.content_h, self.content_w)
         } else {
@@ -238,24 +148,30 @@ impl PlacementGeometry {
         }
     }
 
-    pub fn frame_rect(&self, reserved_slot: &Rect, rotated: bool) -> Rect {
+    fn content_rect(self, allocation: Rect, rotated: bool) -> Rect {
         let (frame_w, frame_h) = self.rotated_content_size(rotated);
-        Rect::new(
-            reserved_slot.x.saturating_add(self.offset),
-            reserved_slot.y.saturating_add(self.offset),
+        let content = Rect::new(
+            allocation.x.saturating_add(self.offset),
+            allocation.y.saturating_add(self.offset),
             frame_w,
             frame_h,
-        )
+        );
+        debug_assert_eq!(
+            allocation.w as u64,
+            content.w as u64 + self.offset as u64 + self.trailing_extra as u64
+        );
+        debug_assert_eq!(
+            allocation.h as u64,
+            content.h as u64 + self.offset as u64 + self.trailing_extra as u64
+        );
+        content
     }
 
-    pub fn frame<K>(&self, key: K, source: Rect, reserved_slot: &Rect, rotated: bool) -> Frame<K> {
-        Frame {
-            key,
-            frame: self.frame_rect(reserved_slot, rotated),
+    pub(crate) fn complete(self, allocation: Rect, rotated: bool) -> PhysicalPlacement {
+        PhysicalPlacement {
+            content: self.content_rect(allocation, rotated),
+            allocation,
             rotated,
-            trimmed: false,
-            source,
-            source_size: (source.w, source.h),
         }
     }
 }

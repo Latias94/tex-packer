@@ -1,7 +1,7 @@
 use std::fs;
 
 use anyhow::Context;
-use tex_packer_core::{InputImage, PackOutput, PackerConfig, pack_images};
+use tex_packer_core::offline::{InputImage, OfflinePacker, PackOutput};
 use tracing::{info, instrument};
 
 use crate::PackArgs;
@@ -17,41 +17,30 @@ pub(crate) fn run_pack(cli: &PackArgs, show_progress: bool) -> anyhow::Result<()
     fs::create_dir_all(&cli.out_dir)
         .with_context(|| format!("create out_dir {}", cli.out_dir.display()))?;
 
-    let cfg = config_adapter::build_pack_config(cli)?;
+    let resolved = config_adapter::build_pack_config(cli)?;
     if cli.print_config {
-        print_config(&cfg, &cli.print_config_format)?;
+        println!("{}", resolved.print(&cli.print_config_format)?);
         return Ok(());
     }
+    let packer = OfflinePacker::new(resolved.into_offline());
 
     let paths = gather_paths(&cli.input, &cli.include, &cli.exclude)?;
     let inputs = load_images_with_progress(&paths, show_progress)?;
     info!(count = inputs.len(), "loaded input images");
 
     if cli.layout_only {
-        return run_layout_only(cli, cfg, inputs);
+        return run_layout_only(cli, &packer, inputs);
     }
 
-    run_image_pack(cli, cfg, inputs)
-}
-
-fn print_config(cfg: &PackerConfig, format: &str) -> anyhow::Result<()> {
-    match format {
-        "yaml" => println!("{}", serde_yaml::to_string(cfg)?),
-        _ => println!("{}", serde_json::to_string_pretty(cfg)?),
-    }
-    Ok(())
+    run_image_pack(cli, &packer, inputs)
 }
 
 fn run_layout_only(
     cli: &PackArgs,
-    cfg: PackerConfig,
+    packer: &OfflinePacker,
     inputs: Vec<InputImage>,
 ) -> anyhow::Result<()> {
-    let items = inputs
-        .iter()
-        .map(|input| layout_item_from_image(input, &cfg))
-        .collect::<Vec<_>>();
-    let atlas = tex_packer_core::pack_layout_items(items, cfg)?;
+    let atlas = packer.layout_images(inputs)?;
 
     write_layout_metadata(cli, &atlas)?;
     if let Some(stats_path) = &cli.export_stats {
@@ -60,48 +49,12 @@ fn run_layout_only(
     Ok(())
 }
 
-fn layout_item_from_image(
-    input: &InputImage,
-    cfg: &PackerConfig,
-) -> tex_packer_core::pipeline::LayoutItem<String> {
-    let rgba = input.image.to_rgba8();
-    let (width, height) = rgba.dimensions();
-    let (trimmed_width, trimmed_height, source, trimmed) = if cfg.trim {
-        let (trim_opt, source_rect) = tex_packer_core::compute_trim_rect(&rgba, cfg.trim_threshold);
-        match trim_opt {
-            Some(rect) => (rect.w, rect.h, source_rect, true),
-            None => (
-                width,
-                height,
-                tex_packer_core::Rect::new(0, 0, width, height),
-                false,
-            ),
-        }
-    } else {
-        (
-            width,
-            height,
-            tex_packer_core::Rect::new(0, 0, width, height),
-            false,
-        )
-    };
-
-    tex_packer_core::pipeline::LayoutItem {
-        key: input.key.clone(),
-        w: trimmed_width,
-        h: trimmed_height,
-        source: Some(source),
-        source_size: Some((width, height)),
-        trimmed,
-    }
-}
-
 fn run_image_pack(
     cli: &PackArgs,
-    cfg: PackerConfig,
+    packer: &OfflinePacker,
     inputs: Vec<InputImage>,
 ) -> anyhow::Result<()> {
-    let output = pack_images(inputs, cfg)?;
+    let output = packer.pack_images(inputs)?;
 
     if !cli.dry_run {
         write_output_pages(cli, &output)?;
@@ -125,10 +78,77 @@ fn log_pack_stats(output: &PackOutput) {
         pages = stats.num_pages,
         frames = stats.num_frames,
         regions = stats.num_regions,
-        deduplicated = stats.num_deduplicated,
-        used_area = stats.used_region_area,
-        total_area = stats.total_page_area,
-        occupancy = format!("{:.2}%", stats.occupancy * 100.0),
+        aliases = stats.num_aliases,
+        content_area = stats.content_area,
+        allocation_area = stats.allocation_area,
+        page_area = stats.page_area,
+        content_occupancy = format!("{:.2}%", stats.content_occupancy * 100.0),
+        allocation_occupancy = format!("{:.2}%", stats.allocation_occupancy * 100.0),
         "stats"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use image::{DynamicImage, Rgba, RgbaImage};
+    use tex_packer_core::config::{OfflineConfig, TransparentPolicy};
+    use tex_packer_core::export::to_json_array;
+
+    use super::*;
+    use crate::test_support::{TestDirectory, pack_args};
+
+    fn parity_inputs() -> Vec<InputImage> {
+        let visible =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([32, 160, 224, 255])));
+        let transparent = DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([0, 0, 0, 0])));
+        vec![
+            InputImage {
+                key: "visible-a".into(),
+                image: visible.clone(),
+            },
+            InputImage {
+                key: "transparent".into(),
+                image: transparent,
+            },
+            InputImage {
+                key: "visible-b".into(),
+                image: visible,
+            },
+        ]
+    }
+
+    #[test]
+    fn layout_only_preserves_decoded_image_policy_and_writes_no_png() {
+        let output_dir = TestDirectory::new("layout-only-parity").unwrap();
+        let mut cli = pack_args(output_dir.path());
+        cli.name = "layout".into();
+        cli.metadata = "json-array".into();
+        let config = OfflineConfig::builder()
+            .transparent_policy(TransparentPolicy::Skip)
+            .build()
+            .unwrap();
+        let expected = OfflinePacker::new(config.clone())
+            .pack_images(parity_inputs())
+            .unwrap();
+
+        run_layout_only(&cli, &OfflinePacker::new(config), parity_inputs()).unwrap();
+
+        let metadata_path = output_dir.path().join("layout.json");
+        let actual: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(metadata_path).unwrap()).unwrap();
+        assert_eq!(actual, to_json_array(expected.atlas()));
+
+        let frames = actual["pages"][0]["frames"].as_array().unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0]["key"], "visible-a");
+        assert_eq!(frames[1]["key"], "visible-b");
+        assert_eq!(frames[0]["frame"], frames[1]["frame"]);
+        assert!(fs::read_dir(output_dir.path()).unwrap().all(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .extension()
+                .is_none_or(|extension| extension != "png")
+        }));
+    }
 }

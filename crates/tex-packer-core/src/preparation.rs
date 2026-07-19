@@ -1,7 +1,37 @@
-use crate::config::{PackerConfig, SortOrder, TransparentPolicy};
+use crate::config::{OfflineConfig, SortOrder, TransparentPolicy};
+use crate::error::{Result, TexPackerError};
 use crate::model::Rect;
-use crate::pipeline::{InputImage, LayoutItem};
+use crate::offline::{InputImage, LayoutItem};
 use image::RgbaImage;
+
+#[derive(Debug, Clone, Copy)]
+struct TrimOptions {
+    threshold: u8,
+    transparent_policy: TransparentPolicy,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ImagePreparation {
+    trim: Option<TrimOptions>,
+    sort_order: SortOrder,
+}
+
+impl From<&OfflineConfig> for ImagePreparation {
+    fn from(config: &OfflineConfig) -> Self {
+        let trim = config
+            .trim_threshold()
+            .zip(config.transparent_policy())
+            .map(|(threshold, transparent_policy)| TrimOptions {
+                threshold,
+                transparent_policy,
+            });
+
+        Self {
+            trim,
+            sort_order: config.sort_order(),
+        }
+    }
+}
 
 pub(crate) struct PreparedItem<T> {
     pub(crate) key: String,
@@ -13,46 +43,36 @@ pub(crate) struct PreparedItem<T> {
 }
 
 pub(crate) fn prepare_images(
-    inputs: &[InputImage],
-    cfg: &PackerConfig,
-) -> Vec<PreparedItem<RgbaImage>> {
+    inputs: Vec<InputImage>,
+    config: &OfflineConfig,
+) -> Result<Vec<PreparedItem<RgbaImage>>> {
+    let preparation = ImagePreparation::from(config);
     let mut out = Vec::with_capacity(inputs.len());
     for input in inputs {
-        let rgba = input.image.to_rgba8();
-        if let Some(item) = prepare_image(input.key.clone(), rgba, cfg) {
+        let (width, height) = (input.image.width(), input.image.height());
+        validate_item_dimensions(&input.key, width, height)?;
+        let rgba = input.image.into_rgba8();
+        if let Some(item) = prepare_image(input.key, rgba, preparation) {
             out.push(item);
         }
     }
-    sort_prepared(&mut out, cfg);
-    out
+    sort_prepared(&mut out, preparation.sort_order);
+    Ok(out)
 }
 
 fn prepare_image(
     key: String,
     rgba: RgbaImage,
-    cfg: &PackerConfig,
+    preparation: ImagePreparation,
 ) -> Option<PreparedItem<RgbaImage>> {
     let (width, height) = rgba.dimensions();
-    let (rect, trimmed, source) = if cfg.trim {
-        let (trim_rect_opt, source_rect) = compute_trim_rect(&rgba, cfg.trim_threshold);
-        match trim_rect_opt {
-            Some(rect) => (Rect::new(0, 0, rect.w, rect.h), true, source_rect),
-            None => match cfg.transparent_policy {
-                TransparentPolicy::Keep => (
-                    Rect::new(0, 0, width, height),
-                    false,
-                    Rect::new(0, 0, width, height),
-                ),
-                TransparentPolicy::OneByOne => (Rect::new(0, 0, 1, 1), true, Rect::new(0, 0, 1, 1)),
-                TransparentPolicy::Skip => return None,
-            },
-        }
-    } else {
-        (
+    let (rect, trimmed, source) = match preparation.trim {
+        Some(trim) => prepare_trimmed_geometry(&rgba, trim)?,
+        None => (
             Rect::new(0, 0, width, height),
             false,
             Rect::new(0, 0, width, height),
-        )
+        ),
     };
 
     Some(PreparedItem {
@@ -65,64 +85,68 @@ fn prepare_image(
     })
 }
 
-pub(crate) fn prepare_layout<K: Into<String>>(
-    inputs: Vec<(K, u32, u32)>,
-    cfg: &PackerConfig,
-) -> Vec<PreparedItem<()>> {
-    let mut prepared = inputs
-        .into_iter()
-        .map(|(key, width, height)| {
-            let key = key.into();
-            let rect = Rect::new(0, 0, width, height);
-            PreparedItem {
-                key,
-                payload: (),
-                rect,
-                trimmed: false,
-                source: rect,
-                orig_size: (width, height),
-            }
-        })
-        .collect::<Vec<_>>();
-    sort_prepared(&mut prepared, cfg);
-    prepared
+fn prepare_trimmed_geometry(rgba: &RgbaImage, trim: TrimOptions) -> Option<(Rect, bool, Rect)> {
+    let (trim_rect, source) = compute_trim_rect(rgba, trim.threshold);
+    match (trim_rect, trim.transparent_policy) {
+        (Some(rect), _) => Some((Rect::new(0, 0, rect.w, rect.h), true, source)),
+        (None, TransparentPolicy::Keep) => {
+            let (width, height) = rgba.dimensions();
+            let full = Rect::new(0, 0, width, height);
+            Some((full, false, full))
+        }
+        (None, TransparentPolicy::OneByOne) => {
+            let pixel = Rect::new(0, 0, 1, 1);
+            Some((pixel, true, pixel))
+        }
+        (None, TransparentPolicy::Skip) => None,
+    }
 }
 
-pub(crate) fn prepare_layout_items<K: Into<String>>(
-    items: Vec<LayoutItem<K>>,
-    cfg: &PackerConfig,
-) -> Vec<PreparedItem<()>> {
-    let mut prepared = items
-        .into_iter()
-        .map(|item| {
-            let key = item.key.into();
-            let rect = Rect::new(0, 0, item.w, item.h);
-            let source = item.source.unwrap_or(rect);
-            let orig_size = item.source_size.unwrap_or((item.w, item.h));
-            PreparedItem {
-                key,
-                payload: (),
-                rect,
-                trimmed: item.trimmed,
-                source,
-                orig_size,
-            }
-        })
-        .collect::<Vec<_>>();
-    sort_prepared(&mut prepared, cfg);
-    prepared
+pub(crate) fn prepare_layout_items(
+    items: Vec<LayoutItem>,
+    config: &OfflineConfig,
+) -> Result<Vec<PreparedItem<()>>> {
+    let preparation = ImagePreparation::from(config);
+    let mut prepared = Vec::with_capacity(items.len());
+    for item in items {
+        validate_item_dimensions(&item.key, item.w, item.h)?;
+        let rect = Rect::new(0, 0, item.w, item.h);
+        let source = item.source.unwrap_or(rect);
+        let orig_size = item.source_size.unwrap_or((item.w, item.h));
+        prepared.push(PreparedItem {
+            key: item.key,
+            payload: (),
+            rect,
+            trimmed: item.trimmed,
+            source,
+            orig_size,
+        });
+    }
+    sort_prepared(&mut prepared, preparation.sort_order);
+    Ok(prepared)
 }
 
-pub(crate) fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], cfg: &PackerConfig) {
-    match cfg.sort_order {
+fn validate_item_dimensions(key: &str, width: u32, height: u32) -> Result<()> {
+    if width == 0 || height == 0 {
+        return Err(TexPackerError::InvalidItemDimensions {
+            key: key.to_string(),
+            width,
+            height,
+        });
+    }
+    Ok(())
+}
+
+fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], sort_order: SortOrder) {
+    match sort_order {
         SortOrder::None => {}
         SortOrder::NameAsc => {
             prepared.sort_by(|a, b| a.key.cmp(&b.key));
         }
         SortOrder::AreaDesc => {
             prepared.sort_by(|a, b| {
-                (b.rect.w * b.rect.h)
-                    .cmp(&(a.rect.w * a.rect.h))
+                (u64::from(b.rect.w) * u64::from(b.rect.h))
+                    .cmp(&(u64::from(a.rect.w) * u64::from(a.rect.h)))
                     .then_with(|| a.key.cmp(&b.key))
             });
         }
@@ -144,7 +168,7 @@ pub(crate) fn sort_prepared<T>(prepared: &mut [PreparedItem<T>], cfg: &PackerCon
     }
 }
 
-pub fn compute_trim_rect(rgba: &RgbaImage, threshold: u8) -> (Option<Rect>, Rect) {
+pub(crate) fn compute_trim_rect(rgba: &RgbaImage, threshold: u8) -> (Option<Rect>, Rect) {
     let (width, height) = rgba.dimensions();
     let mut x1 = 0;
     let mut y1 = 0;

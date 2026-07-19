@@ -1,40 +1,53 @@
-use tex_packer_core::prelude::*;
-
-fn reserved_slot(f: &Rect, cfg: &PackerConfig) -> Rect {
-    let pad_half = cfg.texture_padding / 2;
-    let off = cfg.texture_extrusion + pad_half;
-    Rect::new(
-        f.x.saturating_sub(off),
-        f.y.saturating_sub(off),
-        f.w + cfg.texture_extrusion * 2 + cfg.texture_padding,
-        f.h + cfg.texture_extrusion * 2 + cfg.texture_padding,
-    )
-}
+use tex_packer_core::config::{OfflineConfig, PageConfig};
+use tex_packer_core::model::{AtlasDocument, Rect};
+use tex_packer_core::offline::{InputImage, LayoutItem, OfflinePacker};
 
 #[test]
 fn force_max_ignores_pow2_and_square() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(300, 180)
+    let page = PageConfig::builder()
+        .max_dimensions(300, 180)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
         .force_max_dimensions(true)
-        .pow2(true)
+        .power_of_two(true)
         .square(true)
-        .build();
-    let inputs = vec![("a", 10, 10)];
-    let atlas = tex_packer_core::pack_layout(inputs, cfg).expect("pack");
-    let p = &atlas.pages[0];
-    assert_eq!(p.width, 300);
-    assert_eq!(p.height, 180);
+        .build()
+        .expect("valid offline config");
+    let inputs = vec![LayoutItem {
+        key: "a".into(),
+        w: 10,
+        h: 10,
+        source: None,
+        source_size: None,
+        trimmed: false,
+    }];
+    let atlas = OfflinePacker::new(cfg).pack_layout(inputs).expect("pack");
+    let p = &atlas.pages()[0];
+    assert_eq!(p.width(), 300);
+    assert_eq!(p.height(), 180);
+    assert!(!atlas.meta().power_of_two());
+    assert!(!atlas.meta().square());
+    AtlasDocument::from_atlas(&atlas)
+        .try_into_atlas()
+        .expect("force-max output metadata must round-trip");
 }
 
 #[test]
 fn border_padding_is_respected_in_pack_images() {
     // Use RGBA path to validate composition path, with non-zero border/padding/extrude
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
         .border_padding(8)
         .texture_padding(4)
         .texture_extrusion(2)
-        .build();
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .build()
+        .expect("valid offline config");
     let mut inputs: Vec<InputImage> = Vec::new();
     for i in 0..4u32 {
         let img = image::DynamicImage::ImageRgba8(image::RgbaImage::new(32, 16));
@@ -43,17 +56,20 @@ fn border_padding_is_respected_in_pack_images() {
             image: img,
         });
     }
-    let out = tex_packer_core::pack_images(inputs, cfg.clone()).expect("pack");
-    for page in &out.atlas.pages {
+    let out = OfflinePacker::new(cfg.clone())
+        .pack_images(inputs)
+        .expect("pack");
+    let page_config = cfg.page_config();
+    for page in out.atlas().pages() {
         // Logical border rectangle
         let border_rect = Rect::new(
-            cfg.border_padding,
-            cfg.border_padding,
-            cfg.max_width - cfg.border_padding * 2,
-            cfg.max_height - cfg.border_padding * 2,
+            page_config.border_padding(),
+            page_config.border_padding(),
+            page_config.max_width() - page_config.border_padding() * 2,
+            page_config.max_height() - page_config.border_padding() * 2,
         );
-        for f in &page.frames {
-            let slot = reserved_slot(&f.frame, &cfg);
+        for region in page.regions() {
+            let slot = region.allocation();
             assert!(
                 border_rect.contains(&slot),
                 "reserved slot must stay within border: border={:?} slot={:?}",

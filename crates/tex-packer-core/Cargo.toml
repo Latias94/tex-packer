@@ -1,6 +1,6 @@
 [package]
 name = "tex-packer-core"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 readme = "README.md"
 description = "Core algorithms and API for packing images into texture atlases (Skyline / MaxRects / Guillotine). Returns pages (RGBA) and metadata (JSON/Plist/templates)."
@@ -39,9 +39,15 @@ version = "1.10"
 optional = true
 
 [dev-dependencies]
-rand = "0.8"
-criterion = { version = "0.7", features = ["html_reports"] }
+rand = "0.10.2"
+criterion = { version = "0.8.2", features = ["html_reports"] }
+jsonschema = { version = "0.48.1", default-features = false }
+plist = "1.10.0"
 
 [[bench]]
 name = "runtime_strategies"
+harness = false
+
+[[bench]]
+name = "atlas_resolution"
 harness = false

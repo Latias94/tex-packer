@@ -1,13 +1,57 @@
 use image::{Rgba, RgbaImage};
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{
+    GuillotineChoice, GuillotineSplit, PageConfig, PageConfigBuilder, RuntimeConfig,
+    RuntimeStrategy,
+};
+use tex_packer_core::model::PageId;
+use tex_packer_core::runtime::{RuntimeAtlas, UpdateRegion};
+
+fn guillotine_config(page: PageConfigBuilder) -> RuntimeConfig {
+    RuntimeConfig::builder()
+        .page_config(page.build().expect("valid page config"))
+        .strategy(RuntimeStrategy::Guillotine {
+            choice: GuillotineChoice::BestAreaFit,
+            split: GuillotineSplit::SplitShorterLeftoverAxis,
+        })
+        .build()
+        .expect("valid runtime config")
+}
+
+#[test]
+fn rejected_image_append_leaves_runtime_atlas_empty() {
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(64, 64));
+    let mut atlas = RuntimeAtlas::new(cfg);
+    let invalid_image = RgbaImage::new(0, 16);
+
+    assert!(
+        atlas
+            .append_with_image("zero_width".into(), &invalid_image)
+            .is_err()
+    );
+    assert_eq!(atlas.texture_count(), 0);
+    assert_eq!(atlas.stats().num_pages, 0);
+    assert!(
+        atlas
+            .snapshot_atlas()
+            .expect("valid empty snapshot")
+            .pages()
+            .is_empty()
+    );
+    assert_eq!(atlas.num_pages(), 0);
+
+    let valid_image = RgbaImage::from_pixel(16, 16, Rgba([255, 0, 0, 255]));
+    let update = atlas
+        .append_with_image("valid".into(), &valid_image)
+        .expect("a valid append should still use the first page");
+    assert_eq!(update.placement().page_id(), PageId::new(0));
+    assert_eq!(atlas.num_pages(), 1);
+}
 
 #[test]
 fn test_runtime_atlas_basic() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Create a test image
     let img = RgbaImage::from_pixel(64, 64, Rgba([255, 0, 0, 255]));
@@ -16,11 +60,13 @@ fn test_runtime_atlas_basic() {
     let result = atlas.append_with_image("red_square".into(), &img);
     assert!(result.is_ok());
 
-    let (page_id, frame, region) = result.unwrap();
-    assert_eq!(page_id, 0);
-    assert_eq!(frame.frame.w, 64);
-    assert_eq!(frame.frame.h, 64);
-    assert_eq!(region.page_id, 0);
+    let update = result.expect("runtime image update");
+    let placement = update.placement();
+    let region = update.dirty_region();
+    assert_eq!(placement.page_id(), PageId::new(0));
+    assert_eq!(placement.content().w, 64);
+    assert_eq!(placement.content().h, 64);
+    assert_eq!(region.page_id, PageId::new(0));
     assert_eq!(region.width, 64);
     assert_eq!(region.height, 64);
     assert!(!region.is_empty());
@@ -28,15 +74,13 @@ fn test_runtime_atlas_basic() {
 
 #[test]
 fn test_runtime_atlas_get_page_image() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Initially no pages
     assert_eq!(atlas.num_pages(), 0);
-    assert!(atlas.get_page_image(0).is_none());
+    assert!(atlas.get_page_image(PageId::new(0)).is_none());
 
     // Add an image
     let img = RgbaImage::from_pixel(32, 32, Rgba([0, 255, 0, 255]));
@@ -44,46 +88,46 @@ fn test_runtime_atlas_get_page_image() {
 
     // Now page 0 should exist
     assert_eq!(atlas.num_pages(), 1);
-    assert!(atlas.get_page_image(0).is_some());
+    assert!(atlas.get_page_image(PageId::new(0)).is_some());
 
-    let page = atlas.get_page_image(0).unwrap();
+    let page = atlas.get_page_image(PageId::new(0)).unwrap();
     assert_eq!(page.width(), 256);
     assert_eq!(page.height(), 256);
 }
 
 #[test]
 fn test_runtime_atlas_pixel_data() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Create a red image
     let red_img = RgbaImage::from_pixel(32, 32, Rgba([255, 0, 0, 255]));
-    let (page_id, frame, _) = atlas.append_with_image("red".into(), &red_img).unwrap();
+    let update = atlas.append_with_image("red".into(), &red_img).unwrap();
+    let page_id = update.placement().page_id();
+    let content = update.placement().content();
 
     // Verify pixel data was copied
     let page = atlas.get_page_image(page_id).unwrap();
-    let pixel = page.get_pixel(frame.frame.x, frame.frame.y);
+    let pixel = page.get_pixel(content.x, content.y);
     assert_eq!(pixel, &Rgba([255, 0, 0, 255]));
 }
 
 #[test]
 fn test_runtime_atlas_evict_with_clear() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Add an image
     let img = RgbaImage::from_pixel(32, 32, Rgba([255, 0, 0, 255]));
-    let (page_id, frame, _) = atlas.append_with_image("test".into(), &img).unwrap();
+    let update = atlas.append_with_image("test".into(), &img).unwrap();
+    let page_id = update.placement().page_id();
+    let content = update.placement().content();
 
     // Verify pixel is red
     let page = atlas.get_page_image(page_id).unwrap();
-    let pixel = page.get_pixel(frame.frame.x, frame.frame.y);
+    let pixel = page.get_pixel(content.x, content.y);
     assert_eq!(pixel, &Rgba([255, 0, 0, 255]));
 
     // Evict with clear
@@ -94,21 +138,21 @@ fn test_runtime_atlas_evict_with_clear() {
 
     // Verify pixel is now transparent (cleared)
     let page = atlas.get_page_image(page_id).unwrap();
-    let pixel = page.get_pixel(frame.frame.x, frame.frame.y);
+    let pixel = page.get_pixel(content.x, content.y);
     assert_eq!(pixel, &Rgba([0, 0, 0, 0]));
 }
 
 #[test]
 fn test_runtime_atlas_evict_by_key_with_clear() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Add an image
     let img = RgbaImage::from_pixel(32, 32, Rgba([0, 255, 0, 255]));
-    let (page_id, frame, _) = atlas.append_with_image("green".into(), &img).unwrap();
+    let update = atlas.append_with_image("green".into(), &img).unwrap();
+    let page_id = update.placement().page_id();
+    let content = update.placement().content();
 
     // Evict by key with clear
     let region = atlas.evict_by_key_with_clear("green", true);
@@ -116,30 +160,83 @@ fn test_runtime_atlas_evict_by_key_with_clear() {
 
     // Verify cleared
     let page = atlas.get_page_image(page_id).unwrap();
-    let pixel = page.get_pixel(frame.frame.x, frame.frame.y);
+    let pixel = page.get_pixel(content.x, content.y);
     assert_eq!(pixel, &Rgba([0, 0, 0, 0]));
+}
+
+fn assert_clear_free_eviction(
+    evict: impl FnOnce(&mut RuntimeAtlas, PageId, &str) -> Option<UpdateRegion>,
+) {
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(64, 64));
+    let mut atlas = RuntimeAtlas::new(cfg);
+    let original = RgbaImage::from_pixel(16, 16, Rgba([255, 0, 0, 255]));
+    let placement = atlas
+        .append_with_image("original".into(), &original)
+        .expect("append original image")
+        .placement()
+        .clone();
+    let pixels_before = atlas
+        .get_page_image(placement.page_id())
+        .expect("pixel page")
+        .as_raw()
+        .clone();
+
+    assert_eq!(
+        evict(&mut atlas, placement.page_id(), "original"),
+        Some(UpdateRegion::empty())
+    );
+    assert!(!atlas.contains("original"));
+    assert_eq!(
+        atlas
+            .get_page_image(placement.page_id())
+            .expect("pixel page remains allocated")
+            .as_raw(),
+        &pixels_before
+    );
+
+    let replacement = RgbaImage::from_pixel(16, 16, Rgba([0, 0, 255, 255]));
+    let replacement = atlas
+        .append_with_image("replacement".into(), &replacement)
+        .expect("reuse the freed allocation")
+        .placement()
+        .clone();
+    assert_eq!(replacement.page_id(), placement.page_id());
+    assert_eq!(replacement.allocation(), placement.allocation());
+}
+
+#[test]
+fn evict_without_clear_preserves_pixels_and_reuses_the_allocation() {
+    assert_clear_free_eviction(|atlas, page_id, key| atlas.evict_with_clear(page_id, key, false));
+}
+
+#[test]
+fn evict_by_key_without_clear_preserves_pixels_and_reuses_the_allocation() {
+    assert_clear_free_eviction(|atlas, _page_id, key| atlas.evict_by_key_with_clear(key, false));
 }
 
 #[test]
 fn test_runtime_atlas_evict_clears_extrude_area() {
     // Configure extrusion and padding, so reserved slot is larger than content
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .texture_extrusion(2)
-        .texture_padding(2)
-        .build();
+    let cfg = guillotine_config(
+        PageConfig::builder()
+            .max_dimensions(256, 256)
+            .texture_extrusion(2)
+            .texture_padding(2),
+    );
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Add a small solid image
     let img = RgbaImage::from_pixel(16, 16, Rgba([200, 50, 50, 255]));
-    let (page_id, frame, _) = atlas
+    let update = atlas
         .append_with_image("solid".into(), &img)
         .expect("append");
+    let page_id = update.placement().page_id();
+    let content = update.placement().content();
 
     // A pixel just left to the content should be part of extrude zone, thus colored now
-    let x_left = frame.frame.x - 1; // within extrude since extrude=2
-    let y = frame.frame.y; // on top edge
+    let x_left = content.x - 1; // within extrude since extrude=2
+    let y = content.y; // on top edge
     let before = atlas.get_page_image(page_id).unwrap().get_pixel(x_left, y);
     assert_ne!(before, &Rgba([0, 0, 0, 0]));
 
@@ -153,20 +250,17 @@ fn test_runtime_atlas_evict_clears_extrude_area() {
 
 #[test]
 fn test_runtime_atlas_background_color() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(128, 128)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(128, 128));
 
     let bg_color = Rgba([100, 100, 100, 255]);
-    let mut atlas =
-        RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine).with_background_color(bg_color);
+    let mut atlas = RuntimeAtlas::new(cfg).with_background_color(bg_color);
 
     // Add an image to create a page
     let img = RgbaImage::from_pixel(16, 16, Rgba([255, 255, 255, 255]));
     atlas.append_with_image("white".into(), &img).unwrap();
 
     // Check that background is the specified color
-    let page = atlas.get_page_image(0).unwrap();
+    let page = atlas.get_page_image(PageId::new(0)).unwrap();
     // Check a pixel that should be background
     let bg_pixel = page.get_pixel(100, 100);
     assert_eq!(bg_pixel, &bg_color);
@@ -174,11 +268,9 @@ fn test_runtime_atlas_background_color() {
 
 #[test]
 fn test_runtime_atlas_multiple_images() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Add multiple images
     let red = RgbaImage::from_pixel(32, 32, Rgba([255, 0, 0, 255]));
@@ -198,40 +290,38 @@ fn test_runtime_atlas_multiple_images() {
 
 #[test]
 fn test_runtime_atlas_update_region() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     let img = RgbaImage::from_pixel(64, 48, Rgba([255, 255, 0, 255]));
-    let (page_id, frame, region) = atlas.append_with_image("yellow".into(), &img).unwrap();
+    let update = atlas.append_with_image("yellow".into(), &img).unwrap();
+    let placement = update.placement();
+    let region = update.dirty_region();
 
     // Verify update region matches frame
-    assert_eq!(region.page_id, page_id);
-    assert_eq!(region.x, frame.frame.x);
-    assert_eq!(region.y, frame.frame.y);
-    assert_eq!(region.width, frame.frame.w);
-    assert_eq!(region.height, frame.frame.h);
+    assert_eq!(region.page_id, placement.page_id());
+    assert_eq!(region.x, placement.content().x);
+    assert_eq!(region.y, placement.content().y);
+    assert_eq!(region.width, placement.content().w);
+    assert_eq!(region.height, placement.content().h);
     assert_eq!(region.area(), 64 * 48);
 }
 
 #[test]
 fn test_runtime_atlas_append_without_image() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Append without image data (geometry only)
     let result = atlas.append("geometry_only".into(), 64, 64);
     assert!(result.is_ok());
 
-    let (page_id, frame) = result.unwrap();
-    assert_eq!(page_id, 0);
-    assert_eq!(frame.frame.w, 64);
-    assert_eq!(frame.frame.h, 64);
+    let placement = result.expect("geometry-only placement");
+    assert_eq!(placement.page_id(), PageId::new(0));
+    assert_eq!(placement.content().w, 64);
+    assert_eq!(placement.content().h, 64);
 
     // No pages should be created (no pixel data)
     assert_eq!(atlas.num_pages(), 0);
@@ -239,11 +329,9 @@ fn test_runtime_atlas_append_without_image() {
 
 #[test]
 fn test_runtime_atlas_mixed_usage() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Mix geometry-only and with-image appends
     atlas.append("geo1".into(), 32, 32).unwrap();
@@ -265,49 +353,46 @@ fn test_runtime_atlas_mixed_usage() {
 
 #[test]
 fn test_runtime_atlas_stats() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     let img = RgbaImage::from_pixel(64, 64, Rgba([255, 0, 0, 255]));
     atlas.append_with_image("test".into(), &img).unwrap();
 
     let stats = atlas.stats();
-    assert_eq!(stats.num_textures, 1);
-    assert!(stats.occupancy > 0.0);
+    assert_eq!(stats.num_frames, 1);
+    assert!(stats.allocation_occupancy > 0.0);
 }
 
 #[test]
 fn test_runtime_atlas_get_page_image_mut() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
+    let cfg = guillotine_config(PageConfig::builder().max_dimensions(256, 256));
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     let img = RgbaImage::from_pixel(32, 32, Rgba([255, 0, 0, 255]));
     atlas.append_with_image("test".into(), &img).unwrap();
 
     // Get mutable reference and modify
-    if let Some(page) = atlas.get_page_image_mut(0) {
+    if let Some(page) = atlas.get_page_image_mut(PageId::new(0)) {
         page.put_pixel(0, 0, Rgba([0, 0, 255, 255]));
     }
 
     // Verify modification
-    let page = atlas.get_page_image(0).unwrap();
+    let page = atlas.get_page_image(PageId::new(0)).unwrap();
     assert_eq!(page.get_pixel(0, 0), &Rgba([0, 0, 255, 255]));
 }
 
 #[test]
 fn test_runtime_atlas_rotation() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .allow_rotation(true)
-        .build();
+    let cfg = guillotine_config(
+        PageConfig::builder()
+            .max_dimensions(256, 256)
+            .allow_rotation(true),
+    );
 
-    let mut atlas = RuntimeAtlas::new(cfg, RuntimeStrategy::Guillotine);
+    let mut atlas = RuntimeAtlas::new(cfg);
 
     // Create a non-square image
     let mut img = RgbaImage::new(64, 32);
@@ -318,19 +403,20 @@ fn test_runtime_atlas_rotation() {
         }
     }
 
-    let (page_id, frame, _) = atlas.append_with_image("rect".into(), &img).unwrap();
+    let update = atlas.append_with_image("rect".into(), &img).unwrap();
+    let placement = update.placement();
 
     // If rotated, frame dimensions should be swapped
-    if frame.rotated {
-        assert_eq!(frame.frame.w, 32);
-        assert_eq!(frame.frame.h, 64);
+    if placement.rotated() {
+        assert_eq!(placement.content().w, 32);
+        assert_eq!(placement.content().h, 64);
     } else {
-        assert_eq!(frame.frame.w, 64);
-        assert_eq!(frame.frame.h, 32);
+        assert_eq!(placement.content().w, 64);
+        assert_eq!(placement.content().h, 32);
     }
 
     // Verify page was created
-    assert!(atlas.get_page_image(page_id).is_some());
+    assert!(atlas.get_page_image(placement.page_id()).is_some());
 }
 
 #[test]
@@ -343,7 +429,7 @@ fn test_update_region_empty() {
 #[test]
 fn test_update_region_area() {
     let region = UpdateRegion {
-        page_id: 0,
+        page_id: PageId::new(0),
         x: 10,
         y: 20,
         width: 64,

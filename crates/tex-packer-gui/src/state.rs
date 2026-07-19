@@ -1,10 +1,13 @@
 //! Application state
 
+use crate::config_draft::GuiConfigDraft;
 use crate::presets::PackerPreset;
 use crate::stats::PackStats;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use tex_packer_core::prelude::*;
+use tex_packer_core::export::{to_json_array, to_json_hash};
+use tex_packer_core::model::{Atlas, FrameId, PageId, ResolvedFrame};
+use tex_packer_core::offline::{InputImage, PackOutput};
 use tracing::{error, info};
 
 /// Main application state
@@ -20,8 +23,8 @@ pub struct AppState {
     pub selected_size_idx: usize,
     pub is_custom_preset: bool, // True when user modifies config
 
-    // Config (from preset or custom)
-    pub cfg: PackerConfig,
+    // Editable config (from preset or custom)
+    pub config_draft: GuiConfigDraft,
 
     // Result
     pub result: Option<PackOutput>,
@@ -79,17 +82,36 @@ pub enum PixelFilter {
     Nearest,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectedSprite {
-    pub key: String,
-    pub page_index: usize,
+    pub page_id: PageId,
+    pub frame_id: FrameId,
+}
+
+impl SelectedSprite {
+    pub fn resolve<'a>(self, atlas: &'a Atlas) -> Option<ResolvedFrame<'a>> {
+        atlas
+            .page(self.page_id)?
+            .resolved_frames()
+            .find(|resolved| resolved.frame().id() == self.frame_id)
+    }
+
+    pub fn rendered_page_index(self, result: &PackOutput) -> Option<usize> {
+        self.page_index(result.pages().iter().map(|page| page.page_id()))
+    }
+
+    fn page_index(self, page_ids: impl IntoIterator<Item = PageId>) -> Option<usize> {
+        page_ids
+            .into_iter()
+            .position(|page_id| page_id == self.page_id)
+    }
 }
 
 impl Default for AppState {
     fn default() -> Self {
         let presets = PackerPreset::all();
         let default_preset = PackerPreset::default();
-        let cfg = default_preset.config.clone();
+        let config_draft = default_preset.draft.clone();
 
         Self {
             input_dir: None,
@@ -101,7 +123,7 @@ impl Default for AppState {
             selected_size_idx: 1,   // 2048x2048 is default
             is_custom_preset: false,
 
-            cfg,
+            config_draft,
 
             result: None,
             stats: None,
@@ -150,7 +172,7 @@ impl AppState {
     /// Apply a preset by index
     pub fn apply_preset(&mut self, preset_idx: usize) {
         if let Some(preset) = self.presets.get(preset_idx) {
-            self.cfg = preset.config.clone();
+            self.config_draft = preset.draft.clone();
             self.selected_preset_idx = preset_idx;
             self.is_custom_preset = false;
             info!("Applied preset: {}", preset.name);
@@ -178,8 +200,8 @@ impl AppState {
     pub fn apply_size(&mut self, size_idx: usize) {
         let sizes = self.recommended_sizes();
         if let Some(&(w, h)) = sizes.get(size_idx) {
-            self.cfg.max_width = w;
-            self.cfg.max_height = h;
+            self.config_draft.max_width = w;
+            self.config_draft.max_height = h;
             self.selected_size_idx = size_idx;
             self.dirty_config = true;
         }
@@ -278,6 +300,7 @@ impl AppState {
         self.result = None;
         self.stats = None;
         self.selected_page = 0;
+        self.selected = None;
     }
 
     pub fn do_export(&mut self) {
@@ -293,9 +316,9 @@ impl AppState {
         let name = self.atlas_name.as_str();
 
         // Write pages
-        for p in &result.pages {
-            let file = outdir.join(format!("{name}_{}.png", p.page.id));
-            if let Err(e) = p.rgba.save(&file) {
+        for p in result.pages() {
+            let file = outdir.join(format!("{name}_{}.png", p.page_id()));
+            if let Err(e) = p.rgba().save(&file) {
                 self.set_error(format!("Failed writing {:?}: {e}", file));
                 return;
             }
@@ -303,8 +326,8 @@ impl AppState {
 
         // Write json (hash/array)
         let json = match self.export_format {
-            ExportFormat::Hash => tex_packer_core::to_json_hash(&result.atlas),
-            ExportFormat::Array => tex_packer_core::to_json_array(&result.atlas),
+            ExportFormat::Hash => to_json_hash(result.atlas()),
+            ExportFormat::Array => to_json_array(result.atlas()),
         };
         let json_path = outdir.join(format!("{name}.json"));
         if let Err(e) = std::fs::write(&json_path, serde_json::to_string_pretty(&json).unwrap()) {
@@ -323,4 +346,64 @@ fn is_image_path(path: &std::path::Path) -> bool {
             .map(|s| s.to_ascii_lowercase()),
         Some(ext) if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tif" | "tiff")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tex_packer_core::model::{Frame, Meta, Page, Rect, Region, RegionId};
+
+    fn aliased_atlas() -> Atlas {
+        let page_id = PageId::new(41);
+        let region_id = RegionId::new(7);
+        let content = Rect::new(3, 5, 4, 6);
+        let page = Page::try_new(
+            page_id,
+            32,
+            32,
+            vec![Region::new(region_id, content, content, false)],
+            vec![
+                Frame::new(
+                    FrameId::new(2),
+                    "alias".into(),
+                    region_id,
+                    false,
+                    Rect::new(0, 0, 4, 6),
+                    (4, 6),
+                ),
+                Frame::new(
+                    FrameId::new(9),
+                    "alias".into(),
+                    region_id,
+                    false,
+                    Rect::new(0, 0, 4, 6),
+                    (4, 6),
+                ),
+            ],
+        )
+        .expect("test page should be valid");
+
+        Atlas::try_new(vec![page], Meta::default()).expect("test atlas should be valid")
+    }
+
+    #[test]
+    fn selection_resolves_alias_by_typed_page_and_frame_identity() {
+        let atlas = aliased_atlas();
+        let selection = SelectedSprite {
+            page_id: PageId::new(41),
+            frame_id: FrameId::new(9),
+        };
+
+        let resolved = selection
+            .resolve(&atlas)
+            .expect("the second logical alias should resolve");
+
+        assert_eq!(resolved.page_id(), PageId::new(41));
+        assert_eq!(resolved.frame().id(), FrameId::new(9));
+        assert_eq!(resolved.region().id(), RegionId::new(7));
+        assert_eq!(
+            selection.page_index([PageId::new(99), PageId::new(41)]),
+            Some(1)
+        );
+    }
 }

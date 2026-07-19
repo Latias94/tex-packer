@@ -3,16 +3,21 @@
 [![Crates.io](https://img.shields.io/crates/v/tex-packer-cli.svg)](https://crates.io/crates/tex-packer-cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/Latias94/tex-packer)
 
-Command-line tool for tex-packer. Packs images from disk into atlas pages, writes PNGs and metadata (JSON/Plist/templates).
+Command-line atlas packing for local builds and CI. The CLI reads image files, validates CLI/YAML configuration, runs `tex-packer-core`, and writes PNG plus JSON, plist, or template metadata.
 
 ## Install
 
-- From repo: `cargo install --path crates/tex-packer-cli`
-- From crates.io: `cargo install tex-packer-cli`
-- Parallel portfolio (optional): build the CLI with the `parallel` feature so `--parallel` takes effect.
-  - Example: `cargo run -p tex-packer-cli --features parallel -- <args>`
+```bash
+cargo install tex-packer-cli
+```
 
-## First pack
+From this repository:
+
+```bash
+cargo install --path crates/tex-packer-cli
+```
+
+## First Pack
 
 ```bash
 tex-packer pack ./assets --out ./out --name atlas
@@ -20,10 +25,10 @@ tex-packer pack ./assets --out ./out --name atlas
 
 Outputs:
 
-- Single page: `out/atlas.png` and `out/atlas.json`
-- Multiple pages: `out/atlas_0.png`, `out/atlas_1.png`, ... and `out/atlas.json`
+- One page: `out/atlas.png` and `out/atlas.json`.
+- Multiple pages: `out/atlas_0.png`, `out/atlas_1.png`, and one `out/atlas.json`.
 
-For a higher-quality offline pack:
+Higher-quality offline packing:
 
 ```bash
 tex-packer pack ./assets \
@@ -39,47 +44,57 @@ tex-packer pack ./assets \
 
 ## Commands
 
-- Pack: `tex-packer pack <input> [options]` (writes PNGs + metadata)
-- Template: `tex-packer template <input> [options]` (forces `--metadata template`)
-- Layout: `tex-packer layout <input> [options]` (layout-only: no PNGs; exports JSON/Plist)
-- Bench: `tex-packer bench <input> [--algorithm auto] [--auto-mode quality] [--time-budget MS]`
+- `tex-packer pack <input>` writes rendered page PNGs plus metadata.
+- `tex-packer template <input>` selects template metadata.
+- `tex-packer layout <input>` runs decoded-image preparation and writes metadata without PNG pages.
+- `tex-packer bench <input>` performs one timed pack and prints content/allocation occupancy.
 
-Global flags: `[-q|--quiet] [-v|--verbose] [--progress true|false]`
-
-Metadata formats:
-
-- `--metadata json-array` (alias: `json`) — JSON array layout
-- `--metadata json-hash` — JSON hash layout
-- `--metadata plist` — TexturePacker-style Plist
-- `--metadata template` — Handlebars template (use `--engine unity|godot|phaser3|phaser3_single|spine|cocos|unreal` or `--template <file.hbs>`) 
-
-Examples:
-- Pack basic: `tex-packer pack assets/kenney-ui-pack --out out --name atlas`
-- Auto (quality): `tex-packer pack assets/kenney-ui-pack --algorithm auto --auto-mode quality --time-budget 500 --parallel --metadata plist`
-  - Note: `--parallel` requires building with `--features parallel`.
-- Template export: `tex-packer template assets/kenney-ui-pack --engine unity --out out`
-- Plist export: `tex-packer pack assets/kenney-ui-pack --metadata plist --out out`
-- Layout-only (JSON-Hash): `tex-packer layout assets/generated --out-dir out_layout --name atlas_layout --metadata json-hash`
-- Layout-only (Plist): `tex-packer layout assets/generated/basic --out-dir out_layout --name basic_layout --metadata plist`
-- Stats: `--export-stats out/stats.json` writes `{ pages, frames, regions, deduplicated, used_area, total_area, occupancy }`
-- MaxRects reference split/prune: add `--mr-reference` (quality better on large sets; slower)
-- Print merged config and exit: `--print-config` (useful to inspect YAML+CLI result)
-- Include/Exclude: `--include "**/*.png" --exclude "**/ui/**"` (multiple allowed)
-- Verbosity: `-q/--quiet` suppresses logs; `-v`/`-vv` increases verbosity
-- Progress: `--progress true|false` toggles progress bars (default on; disabled by quiet)
-- Auto thresholds: override quality mode thresholds via `--auto-mr-ref-time-threshold 500` or `--auto-mr-ref-input-threshold 1000`
+Global UX flags are `-q`/`--quiet`, `-v`/`--verbose`, and `--progress true|false`. Progress defaults to enabled, is suppressed by quiet, and is automatically hidden when stderr is redirected.
 
 Run `tex-packer --help` or `tex-packer pack --help` for the full option list.
 
+## Metadata
+
+| Format | Selection | Notes |
+| --- | --- | --- |
+| JSON array | `--metadata json-array` or `json` | Preserves page order, frame order, and duplicate keys. |
+| JSON hash | `--metadata json-hash` | Provides object lookup; the last frame wins for a duplicate key. |
+| Plist | `--metadata plist` | TexturePacker-style metadata with page names. |
+| Template | `--metadata template` or `template` command | Built-in or caller-supplied Handlebars output. |
+
+Built-in engine names are `unity`, `godot`, `phaser3`, `phaser3_single`, `spine`, `cocos`, and `unreal`:
+
+```bash
+tex-packer template ./assets --engine unity --out ./out
+tex-packer template ./assets --engine phaser3 --out ./out
+tex-packer template ./assets --template ./custom.hbs --out ./out
+```
+
+The template context contains ordered pages, page size/name, ordered logical sprites, resolved region geometry, rotation, source reconstruction metadata, and pivot. Built-in templates live under [`src/templates`](src/templates).
+
+Legacy JSON output keeps `meta.schema_version = "1"`. This is independent from the core library's reversible native `AtlasDocument` version 2. The legacy JSON schemas are in the repository [schemas directory](https://github.com/Latias94/tex-packer/tree/main/schemas).
+
+## Statistics
+
+`--export-stats <path>` writes:
+
+```text
+pages, frames, regions, aliases,
+page_area, content_area, allocation_area,
+content_occupancy, allocation_occupancy
+```
+
+`frames` counts logical entries, while `regions` and physical areas count deduplicated allocations once. With `--dry-run`, the same values are printed instead of written.
+
 ## YAML Configuration
 
-You can provide a YAML file via `--config` to set options together. CLI flags still override where noted.
+Pass `--config <path>` to overlay a flat YAML configuration on the CLI draft:
 
 ```yaml
-family: auto            # skyline|maxrects|guillotine|auto
-skyline: minwaste
-heuristic: baf          # for MaxRects
-use_waste_map: false
+family: auto
+auto_mode: quality
+time_budget_ms: 500
+parallel: true
 max_width: 1024
 max_height: 1024
 allow_rotation: true
@@ -88,45 +103,50 @@ texture_padding: 2
 texture_extrusion: 0
 trim: true
 trim_threshold: 0
+transparent_policy: keep
 power_of_two: false
 square: false
 sort_order: area_desc
-auto_mode: quality
-# Portfolio controls
-time_budget_ms: 500
-parallel: true
-# MaxRects split/prune path (reference-accurate)
-mr_reference: true
+mr_reference: false
 ```
 
-## Templates
+The accepted family-specific values are shown by `tex-packer pack --help`. `--print-config --print-config-format yaml` prints the merged flat projection and exits.
 
-Built-in engines: `unity`, `godot`, `phaser3` (multi-atlas), `phaser3_single` (single-page json), `spine` (.atlas text), `cocos`, `unreal`.
-- Custom template: `--metadata template --template my.tpl.hbs`
-- Template context: see docs/TEMPLATES.md or inspect built-ins under `src/templates/`.
+Configuration loading is strict:
 
-Compact context shape:
-- `pages: [ { image: String, size: { w, h }, sprites: [ { name, frame:{x,y,w,h}, rotated, trimmed, sprite_source_size:{x,y,w,h}, source_size:{w,h}, pivot:{x,y} } ] } ]`
-- `meta: { app, version, format, scale }` (JSON exports include full atlas meta with `schema_version`)
+- Unknown fields are rejected with a source location.
+- Duplicate mapping keys are rejected.
+- YAML tags and merge keys (`<<`) are rejected instead of being silently discarded or expanded.
+- YAML 1.1-only boolean words such as `yes`, `no`, `on`, and `off` remain strings and fail when a boolean is required.
 
-## Notes
+## Parallel Auto Packing
 
-- Sorting is stable; repeated runs with same inputs/config yield the same atlas.
-- `--parallel` requires enabling the `parallel` feature in the core crate when building from source.
-- For large sets, use `--release` to improve performance.
-- JSON metadata includes `meta.schema_version = "1"`.
-- JSON Schema (optional): see `schemas/tex-packer-atlas-hash.schema.json` and `schemas/tex-packer-atlas-array.schema.json`.
+Build with the `parallel` feature before using `--parallel` for concurrent Auto candidate evaluation:
 
-## Auto Presets & mr_reference
+```bash
+cargo run -p tex-packer-cli --features parallel -- \
+  pack ./assets --algorithm auto --auto-mode quality --parallel
+```
 
-- `--algorithm auto --auto-mode fast|quality` tries a small portfolio (quality tries more MaxRects/Guillotine variants).
-- Selection: minimize pages, then total area (sum of page areas).
-- Time budget: `--time-budget <ms>` limits candidate evaluation time; `--parallel` can evaluate candidates in parallel.
-- MaxRects `--mr-reference` toggles reference-accurate split/prune. In quality mode, the core auto-enables `mr_reference` for MaxRects candidates when `time_budget_ms >= 200` or inputs `>= 800`.
+Without the feature, configuration and output remain valid but candidate evaluation is sequential.
 
-## Benchmark (Summary)
+## Common Recipes
 
-- kenney-ui-pack (release): Skyline(MW)=1p/88.69%; MaxRects(BAF/BL/CP)=1p/83.32%/82.76%/74.23%; Guillotine(BAF+SLAS)=5p/80.58%.
-- MaxRects split/prune (single 2048x2048)
-  - N=1000: mr_ref=false → 22.82% (~8ms); mr_ref=true → 58.68% (~304ms)
-  - N=5000: mr_ref=false → 24.55% (~9ms);  mr_ref=true → 95.91% (~1241ms)
+```bash
+# Include and exclude globs
+tex-packer pack ./assets --include "**/*.png" --exclude "**/draft/**"
+
+# Layout-only JSON hash
+tex-packer layout ./assets --out ./layout --metadata json-hash
+
+# Plist output
+tex-packer pack ./assets --out ./out --metadata plist
+
+# Validate configuration without packing
+tex-packer pack ./assets --print-config --print-config-format yaml
+
+# Validate packing and report stats without writing atlas files
+tex-packer pack ./assets --dry-run --export-stats ./out/stats.json
+```
+
+For source-level v0.2 to v0.3 changes in the core library, see the [v0.3 migration guide](https://github.com/Latias94/tex-packer/blob/main/docs/migrations/v0.3.md).

@@ -1,12 +1,12 @@
-use super::Packer;
-use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig, SkylineHeuristic};
+use crate::config::{GuillotineChoice, GuillotineSplit, PageConfig, SkylineHeuristic};
 use crate::free_space::{
     guillotine_score, merge_adjacent, prune_contained, subtract_intersections,
 };
 use crate::geometry::{
-    PackingContext, PlacementGeometry, contains_rect, right_ex_u32, span_end_ex,
+    ContentSize, PhysicalPlacement, PlacementGeometry, contains_rect, right_ex_u32, span_end_ex,
+    usable_area,
 };
-use crate::model::{Frame, Rect};
+use crate::model::Rect;
 
 #[derive(Clone, Copy, Debug)]
 struct SkylineNode {
@@ -30,8 +30,8 @@ impl SkylineNode {
     }
 }
 
-pub struct SkylinePacker {
-    config: PackerConfig,
+pub(super) struct SkylinePacker {
+    page_config: PageConfig,
     border: Rect,
     skylines: Vec<SkylineNode>,
     heuristic: SkylineHeuristic,
@@ -39,23 +39,28 @@ pub struct SkylinePacker {
 }
 
 impl SkylinePacker {
-    pub fn new(config: PackerConfig) -> Self {
-        let usable = PackingContext::new(&config).usable_area();
+    pub(super) fn new(
+        page_config: PageConfig,
+        heuristic: SkylineHeuristic,
+        use_waste_map: bool,
+    ) -> Self {
+        let usable = usable_area(&page_config);
+        let allow_rotation = page_config.allow_rotation();
         Self {
-            config: config.clone(),
+            page_config,
             border: usable,
             skylines: vec![SkylineNode {
                 x: usable.x,
                 y: usable.y,
                 w: usable.w,
             }],
-            heuristic: config.skyline_heuristic.clone(),
-            waste: if config.use_waste_map {
+            heuristic,
+            waste: if use_waste_map {
                 Some(WasteMap::new(
                     usable,
-                    config.allow_rotation,
-                    config.g_choice.clone(),
-                    config.g_split.clone(),
+                    allow_rotation,
+                    GuillotineChoice::default(),
+                    GuillotineSplit::default(),
                 ))
             } else {
                 None
@@ -107,7 +112,7 @@ impl SkylinePacker {
                 best_rect = r;
                 best_rot = false;
             }
-            if self.config.allow_rotation
+            if self.page_config.allow_rotation()
                 && let Some(r) = self.can_put(i, h, w)
                 && (r.bottom() < best_bottom
                     || (r.bottom() == best_bottom && self.skylines[i].w < best_width))
@@ -156,7 +161,7 @@ impl SkylinePacker {
                     best_rot = false;
                 }
             }
-            if self.config.allow_rotation
+            if self.page_config.allow_rotation()
                 && let Some(r) = self.can_put(i, h, w)
             {
                 let waste = self.wasted_area_for(i, &r);
@@ -227,71 +232,170 @@ impl SkylinePacker {
 }
 
 #[cfg(test)]
-impl SkylinePacker {
-    pub fn debug_nodes(&self) -> Vec<(u32, u32, u32)> {
-        self.skylines.iter().map(|n| (n.x, n.y, n.w)).collect()
-    }
-    pub fn debug_set_nodes(&mut self, nodes: &[(u32, u32, u32)]) {
-        self.skylines = nodes
-            .iter()
-            .copied()
-            .map(|(x, y, w)| SkylineNode { x, y, w })
-            .collect();
-    }
-    pub fn debug_merge(&mut self) {
-        self.merge();
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::{PhysicalPlacement, intersects};
+    use rand::{RngExt, SeedableRng};
+
+    fn page_config(width: u32, height: u32, allow_rotation: bool) -> PageConfig {
+        PageConfig::builder()
+            .max_dimensions(width, height)
+            .allow_rotation(allow_rotation)
+            .texture_padding(0)
+            .texture_extrusion(0)
+            .build()
+            .expect("valid test page")
+    }
 
     #[test]
     fn merge_does_not_bridge_gaps() {
-        let cfg = PackerConfig::default();
-        let mut p = SkylinePacker::new(cfg);
-        // Two nodes at y=10 separated by a raised segment at y=20
-        p.debug_set_nodes(&[(0, 10, 10), (12, 20, 2), (14, 10, 6)]);
-        p.debug_merge();
-        let nodes = p.debug_nodes();
+        let mut p = SkylinePacker::new(PageConfig::default(), SkylineHeuristic::default(), false);
+        p.skylines = vec![
+            SkylineNode { x: 0, y: 10, w: 10 },
+            SkylineNode { x: 12, y: 20, w: 2 },
+            SkylineNode { x: 14, y: 10, w: 6 },
+        ];
+        p.merge();
+        let nodes = p
+            .skylines
+            .iter()
+            .map(|node| (node.x, node.y, node.w))
+            .collect::<Vec<_>>();
         assert_eq!(nodes.len(), 3);
         assert_eq!(nodes[0], (0, 10, 10));
         assert_eq!(nodes[1], (12, 20, 2));
         assert_eq!(nodes[2], (14, 10, 6));
     }
-}
 
-impl<K: Clone> Packer<K> for SkylinePacker {
-    fn can_pack(&self, rect: &Rect) -> bool {
-        let geometry = PlacementGeometry::new(rect, &self.config);
-        if let Some(wm) = &self.waste
-            && wm.can_fit(geometry.reserved_w, geometry.reserved_h)
-        {
-            return true;
-        }
-        self.find_skyline(geometry.reserved_w, geometry.reserved_h)
-            .is_some()
+    #[test]
+    fn respects_disabled_rotation() {
+        let mut engine = SkylinePacker::new(
+            page_config(256, 256, false),
+            SkylineHeuristic::BottomLeft,
+            false,
+        );
+        let placement = engine
+            .try_place(ContentSize::new(64, 128))
+            .expect("content should fit without rotation");
+        assert!(!placement.rotated);
+        assert_eq!((placement.content.w, placement.content.h), (64, 128));
     }
 
-    fn pack(&mut self, key: K, rect: &Rect) -> Option<Frame<K>> {
-        let geometry = PlacementGeometry::new(rect, &self.config);
+    #[test]
+    fn rotates_when_only_rotated_allocation_fits() {
+        let mut engine = SkylinePacker::new(
+            page_config(16, 12, true),
+            SkylineHeuristic::BottomLeft,
+            false,
+        );
+        let placement = engine
+            .try_place(ContentSize::new(8, 14))
+            .expect("rotated allocation should fit");
+        assert!(placement.rotated);
+        assert_eq!((placement.content.w, placement.content.h), (14, 8));
+        assert_eq!((placement.allocation.w, placement.allocation.h), (14, 8));
+    }
+
+    #[test]
+    fn rejects_span_across_a_full_height_segment() {
+        let mut engine = SkylinePacker::new(
+            page_config(10, 10, false),
+            SkylineHeuristic::BottomLeft,
+            false,
+        );
+        engine
+            .try_place(ContentSize::new(5, 10))
+            .expect("first allocation should fit");
+        assert!(engine.try_place(ContentSize::new(6, 1)).is_none());
+    }
+
+    #[test]
+    fn failed_search_does_not_change_skyline_or_waste_state() {
+        let mut engine =
+            SkylinePacker::new(page_config(16, 12, true), SkylineHeuristic::MinWaste, true);
+        let skyline_before = engine
+            .skylines
+            .iter()
+            .map(|node| (node.x, node.y, node.w))
+            .collect::<Vec<_>>();
+        let waste_before = engine.waste.as_ref().map(|waste| waste.free.clone());
+        assert!(engine.try_place(ContentSize::new(17, 13)).is_none());
+        let skyline_after = engine
+            .skylines
+            .iter()
+            .map(|node| (node.x, node.y, node.w))
+            .collect::<Vec<_>>();
+        let waste_after = engine.waste.as_ref().map(|waste| waste.free.clone());
+        assert_eq!(skyline_after, skyline_before);
+        assert_eq!(waste_after, waste_before);
+    }
+
+    #[test]
+    fn waste_map_is_repeatable_disjoint_and_not_worse_than_plain_skyline() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xDEADBEEF);
+        let sizes = (0..2000)
+            .map(|_| ContentSize::new(rng.random_range(4..=128), rng.random_range(4..=128)))
+            .collect::<Vec<_>>();
+        let config = page_config(2048, 2048, true);
+
+        let plain = pack_all(&config, &sizes, false);
+        let waste = pack_all(&config, &sizes, true);
+        let repeated = pack_all(&config, &sizes, true);
+
+        assert_disjoint(&plain);
+        assert_disjoint(&waste);
+        assert_eq!(waste, repeated);
+        assert!(content_area(&waste) >= content_area(&plain));
+    }
+
+    fn pack_all(
+        config: &PageConfig,
+        sizes: &[ContentSize],
+        use_waste_map: bool,
+    ) -> Vec<PhysicalPlacement> {
+        let mut engine =
+            SkylinePacker::new(config.clone(), SkylineHeuristic::MinWaste, use_waste_map);
+        sizes
+            .iter()
+            .copied()
+            .map_while(|size| engine.try_place(size))
+            .collect()
+    }
+
+    fn assert_disjoint(placements: &[PhysicalPlacement]) {
+        for (index, first) in placements.iter().enumerate() {
+            for second in &placements[index + 1..] {
+                assert!(!intersects(&first.allocation, &second.allocation));
+            }
+        }
+    }
+
+    fn content_area(placements: &[PhysicalPlacement]) -> u128 {
+        placements
+            .iter()
+            .map(|placement| placement.content.w as u128 * placement.content.h as u128)
+            .sum()
+    }
+}
+
+impl SkylinePacker {
+    pub(super) fn try_place(&mut self, content: ContentSize) -> Option<PhysicalPlacement> {
+        let geometry = PlacementGeometry::new(content, &self.page_config)?;
+        let (reserved_w, reserved_h) = geometry.reserved_size();
 
         // Try waste map first
         if let Some(wm) = &mut self.waste
-            && let Some((place, rotated)) = wm.try_pack(geometry.reserved_w, geometry.reserved_h)
+            && let Some((allocation, rotated)) = wm.try_pack(reserved_w, reserved_h)
         {
-            return Some(geometry.frame(key, *rect, &place, rotated));
+            return Some(geometry.complete(allocation, rotated));
         }
 
-        if let Some((i, place, rotated)) =
-            self.find_skyline(geometry.reserved_w, geometry.reserved_h)
-        {
-            self.split(i, &place);
+        if let Some((i, allocation, rotated)) = self.find_skyline(reserved_w, reserved_h) {
+            self.split(i, &allocation);
             self.merge();
-            self.add_waste_areas(i, &place);
+            self.add_waste_areas(i, &allocation);
 
-            Some(geometry.frame(key, *rect, &place, rotated))
+            Some(geometry.complete(allocation, rotated))
         } else {
             None
         }
@@ -356,9 +460,6 @@ impl WasteMap {
             allow_rotation,
             choice,
         }
-    }
-    fn can_fit(&self, w: u32, h: u32) -> bool {
-        self.choose(w, h).is_some()
     }
     fn try_pack(&mut self, w: u32, h: u32) -> Option<(Rect, bool)> {
         if let Some((idx, r, rot)) = self.choose(w, h) {

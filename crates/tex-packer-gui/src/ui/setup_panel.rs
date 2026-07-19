@@ -1,10 +1,13 @@
 //! Setup panel UI (left side, egui)
 
+use crate::config_draft::StrategyKind;
 use crate::state::AppState;
 use eframe::egui;
 use egui_extras::TableBuilder;
 use image::GenericImageView;
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{
+    AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, SkylineHeuristic, SortOrder,
+};
 
 pub fn render(ui: &mut egui::Ui, state: &mut AppState) {
     egui::ScrollArea::vertical()
@@ -104,62 +107,87 @@ fn render_selection_section(ui: &mut egui::Ui, state: &mut AppState) {
     egui::CollapsingHeader::new("Selection")
         .default_open(true)
         .show(ui, |ui| {
-            if let (Some(sel), Some(result)) = (&state.selected, &state.result) {
-                let sel_page = sel.page_index;
-                if let Some(page) = result.pages.get(sel_page) {
-                    if let Some(fr) = page.page.frames.iter().find(|f| f.key == sel.key) {
-                        let name = fr.key.clone();
-                        ui.horizontal(|ui| {
-                            ui.strong("Name:");
-                            ui.label(&name);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.strong("Page:");
-                            ui.label(format!("{}", sel_page + 1));
-                        });
-                        ui.separator();
-                        ui.label(format!(
-                            "Frame: x={} y={} w={} h={}",
-                            fr.frame.x, fr.frame.y, fr.frame.w, fr.frame.h
-                        ));
-                        ui.label(format!("Rotated: {} | Trimmed: {}", fr.rotated, fr.trimmed));
-                        ui.label(format!(
-                            "Source: x={} y={} w={} h={}",
-                            fr.source.x, fr.source.y, fr.source.w, fr.source.h
-                        ));
-                        ui.label(format!(
-                            "SourceSize: {}x{}",
-                            fr.source_size.0, fr.source_size.1
-                        ));
-                        ui.add_space(4.0);
-                        let excluded_now = state.excluded_keys.contains(&name);
-                        ui.horizontal(|ui| {
-                            if ui.button("Go to page").clicked() {
-                                state.selected_page = sel_page;
-                            }
-                            let btn = if excluded_now {
-                                egui::Button::new("Include")
-                            } else {
-                                egui::Button::new("Exclude")
-                            };
-                            if ui.add(btn).clicked() {
-                                if excluded_now {
-                                    state.excluded_keys.remove(&name);
-                                } else {
-                                    state.excluded_keys.insert(name.clone());
-                                }
-                                state.dirty_config = true;
-                            }
-                            if ui.button("Deselect").clicked() {
-                                state.selected = None;
-                            }
-                        });
-                    } else {
-                        ui.weak("Selected sprite not found on current result.");
+            let details = state.selected.and_then(|selection| {
+                let result = state.result.as_ref()?;
+                let resolved = selection.resolve(result.atlas())?;
+                Some((
+                    resolved.frame().key().to_owned(),
+                    selection.rendered_page_index(result),
+                    resolved.page_id(),
+                    resolved.region().content(),
+                    resolved.region().rotated(),
+                    resolved.frame().trimmed(),
+                    resolved.frame().source(),
+                    resolved.frame().source_size(),
+                ))
+            });
+
+            if let Some((
+                name,
+                rendered_page_index,
+                page_id,
+                content,
+                rotated,
+                trimmed,
+                source,
+                source_size,
+            )) = details
+            {
+                ui.horizontal(|ui| {
+                    ui.strong("Name:");
+                    ui.label(&name);
+                });
+                ui.horizontal(|ui| {
+                    ui.strong("Page:");
+                    ui.label(
+                        rendered_page_index
+                            .map(|index| (index + 1).to_string())
+                            .unwrap_or_else(|| page_id.to_string()),
+                    );
+                });
+                ui.separator();
+                ui.label(format!(
+                    "Frame: x={} y={} w={} h={}",
+                    content.x, content.y, content.w, content.h
+                ));
+                ui.label(format!("Rotated: {rotated} | Trimmed: {trimmed}"));
+                ui.label(format!(
+                    "Source: x={} y={} w={} h={}",
+                    source.x, source.y, source.w, source.h
+                ));
+                ui.label(format!("SourceSize: {}x{}", source_size.0, source_size.1));
+                ui.add_space(4.0);
+                let excluded_now = state.excluded_keys.contains(&name);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            rendered_page_index.is_some(),
+                            egui::Button::new("Go to page"),
+                        )
+                        .clicked()
+                        && let Some(page_index) = rendered_page_index
+                    {
+                        state.selected_page = page_index;
                     }
-                } else {
-                    ui.weak("Selected page index is out of range.");
-                }
+                    let btn = if excluded_now {
+                        egui::Button::new("Include")
+                    } else {
+                        egui::Button::new("Exclude")
+                    };
+                    if ui.add(btn).clicked() {
+                        if excluded_now {
+                            state.excluded_keys.remove(&name);
+                        } else {
+                            state.excluded_keys.insert(name.clone());
+                        }
+                        state.dirty_config = true;
+                    }
+                    if ui.button("Deselect").clicked() {
+                        state.selected = None;
+                    }
+                });
+            } else if state.selected.is_some() {
+                ui.weak("Selected sprite not found on current result.");
             } else {
                 ui.weak("No selection.");
             }
@@ -298,8 +326,8 @@ fn render_size_section(ui: &mut egui::Ui, state: &mut AppState) {
 
             ui.add_space(6.0);
             ui.label("Atlas max size:");
-            let mut w = state.cfg.max_width as i32;
-            let mut h = state.cfg.max_height as i32;
+            let mut w = state.config_draft.max_width as i32;
+            let mut h = state.config_draft.max_height as i32;
             ui.horizontal(|ui| {
                 ui.add(
                     egui::DragValue::new(&mut w)
@@ -316,9 +344,9 @@ fn render_size_section(ui: &mut egui::Ui, state: &mut AppState) {
             });
             let w = w.clamp(1, 16384) as u32;
             let h = h.clamp(1, 16384) as u32;
-            if w != state.cfg.max_width || h != state.cfg.max_height {
-                state.cfg.max_width = w;
-                state.cfg.max_height = h;
+            if w != state.config_draft.max_width || h != state.config_draft.max_height {
+                state.config_draft.max_width = w;
+                state.config_draft.max_height = h;
                 state.mark_custom();
             }
         });
@@ -360,35 +388,37 @@ fn render_advanced_general(ui: &mut egui::Ui, state: &mut AppState) {
     let mut any_changed = false;
     ui.horizontal_wrapped(|ui| {
         any_changed |= ui
-            .toggle_value(&mut state.cfg.allow_rotation, "Allow rotation")
+            .toggle_value(&mut state.config_draft.allow_rotation, "Allow rotation")
             .changed();
         any_changed |= ui
-            .toggle_value(&mut state.cfg.trim, "Trim transparent")
+            .toggle_value(&mut state.config_draft.trim, "Trim transparent")
             .changed();
         any_changed |= ui
-            .toggle_value(&mut state.cfg.texture_outlines, "Debug outlines")
+            .toggle_value(&mut state.config_draft.outlines, "Debug outlines")
             .changed();
         any_changed |= ui
-            .toggle_value(&mut state.cfg.power_of_two, "Power-of-two")
+            .toggle_value(&mut state.config_draft.power_of_two, "Power-of-two")
             .changed();
-        any_changed |= ui.toggle_value(&mut state.cfg.square, "Square").changed();
         any_changed |= ui
-            .toggle_value(&mut state.cfg.use_waste_map, "Skyline waste-map")
+            .toggle_value(&mut state.config_draft.square, "Square")
+            .changed();
+        any_changed |= ui
+            .toggle_value(&mut state.config_draft.use_waste_map, "Skyline waste-map")
             .changed();
     });
-    if state.cfg.trim {
-        let mut thr = state.cfg.trim_threshold as i32;
+    if state.config_draft.trim {
+        let mut thr = state.config_draft.trim_threshold as i32;
         if ui
             .add(egui::Slider::new(&mut thr, 0..=255).text("Trim threshold"))
             .changed()
         {
-            state.cfg.trim_threshold = thr as u8;
+            state.config_draft.trim_threshold = thr as u8;
             any_changed = true;
         }
     }
-    let mut tp = state.cfg.texture_padding as i32;
-    let mut te = state.cfg.texture_extrusion as i32;
-    let mut bp = state.cfg.border_padding as i32;
+    let mut tp = state.config_draft.texture_padding as i32;
+    let mut te = state.config_draft.texture_extrusion as i32;
+    let mut bp = state.config_draft.border_padding as i32;
     any_changed |= ui
         .add(egui::Slider::new(&mut tp, 0..=64).text("Texture padding (px)"))
         .changed();
@@ -398,9 +428,9 @@ fn render_advanced_general(ui: &mut egui::Ui, state: &mut AppState) {
     any_changed |= ui
         .add(egui::Slider::new(&mut bp, 0..=128).text("Border padding (px)"))
         .changed();
-    state.cfg.texture_padding = tp as u32;
-    state.cfg.texture_extrusion = te as u32;
-    state.cfg.border_padding = bp as u32;
+    state.config_draft.texture_padding = tp as u32;
+    state.config_draft.texture_extrusion = te as u32;
+    state.config_draft.border_padding = bp as u32;
 
     if any_changed {
         state.mark_custom();
@@ -411,41 +441,44 @@ fn render_advanced_algorithm(ui: &mut egui::Ui, state: &mut AppState) {
     let mut any_changed = false;
     ui.heading("Algorithm");
     ui.horizontal_wrapped(|ui| {
-        let mut fam = state.cfg.family.clone();
+        let mut strategy_kind = state.config_draft.strategy_kind;
         if ui
-            .selectable_label(matches!(fam, AlgorithmFamily::Skyline), "Skyline")
+            .selectable_label(matches!(strategy_kind, StrategyKind::Skyline), "Skyline")
             .clicked()
         {
-            fam = AlgorithmFamily::Skyline;
+            strategy_kind = StrategyKind::Skyline;
         }
         if ui
-            .selectable_label(matches!(fam, AlgorithmFamily::MaxRects), "MaxRects")
+            .selectable_label(matches!(strategy_kind, StrategyKind::MaxRects), "MaxRects")
             .clicked()
         {
-            fam = AlgorithmFamily::MaxRects;
+            strategy_kind = StrategyKind::MaxRects;
         }
         if ui
-            .selectable_label(matches!(fam, AlgorithmFamily::Guillotine), "Guillotine")
+            .selectable_label(
+                matches!(strategy_kind, StrategyKind::Guillotine),
+                "Guillotine",
+            )
             .clicked()
         {
-            fam = AlgorithmFamily::Guillotine;
+            strategy_kind = StrategyKind::Guillotine;
         }
         if ui
-            .selectable_label(matches!(fam, AlgorithmFamily::Auto), "Auto")
+            .selectable_label(matches!(strategy_kind, StrategyKind::Auto), "Auto")
             .clicked()
         {
-            fam = AlgorithmFamily::Auto;
+            strategy_kind = StrategyKind::Auto;
         }
-        if fam != state.cfg.family {
-            state.cfg.family = fam;
+        if strategy_kind != state.config_draft.strategy_kind {
+            state.config_draft.strategy_kind = strategy_kind;
             any_changed = true;
         }
     });
 
-    match state.cfg.family {
-        AlgorithmFamily::Skyline => {
+    match state.config_draft.strategy_kind {
+        StrategyKind::Skyline => {
             ui.label("Skyline heuristic:");
-            let mut h = state.cfg.skyline_heuristic.clone();
+            let mut h = state.config_draft.skyline_heuristic;
             if ui
                 .selectable_label(matches!(h, SkylineHeuristic::BottomLeft), "BottomLeft")
                 .clicked()
@@ -458,12 +491,12 @@ fn render_advanced_algorithm(ui: &mut egui::Ui, state: &mut AppState) {
             {
                 h = SkylineHeuristic::MinWaste;
             }
-            if h != state.cfg.skyline_heuristic {
-                state.cfg.skyline_heuristic = h;
+            if h != state.config_draft.skyline_heuristic {
+                state.config_draft.skyline_heuristic = h;
                 any_changed = true;
             }
         }
-        AlgorithmFamily::MaxRects => {
+        StrategyKind::MaxRects => {
             ui.label("MaxRects heuristic:");
             for (label, val) in [
                 ("BestAreaFit", MaxRectsHeuristic::BestAreaFit),
@@ -472,14 +505,20 @@ fn render_advanced_algorithm(ui: &mut egui::Ui, state: &mut AppState) {
                 ("BottomLeft", MaxRectsHeuristic::BottomLeft),
                 ("ContactPoint", MaxRectsHeuristic::ContactPoint),
             ] {
-                let sel = state.cfg.mr_heuristic == val;
+                let sel = state.config_draft.max_rects_heuristic == val;
                 if ui.selectable_label(sel, label).clicked() {
-                    state.cfg.mr_heuristic = val;
+                    state.config_draft.max_rects_heuristic = val;
                     any_changed = true;
                 }
             }
+            any_changed |= ui
+                .toggle_value(
+                    &mut state.config_draft.max_rects_reference,
+                    "MaxRects reference mode",
+                )
+                .changed();
         }
-        AlgorithmFamily::Guillotine => {
+        StrategyKind::Guillotine => {
             ui.label("Guillotine choice:");
             for (label, val) in [
                 ("BestAreaFit", GuillotineChoice::BestAreaFit),
@@ -489,9 +528,9 @@ fn render_advanced_algorithm(ui: &mut egui::Ui, state: &mut AppState) {
                 ("WorstShortSideFit", GuillotineChoice::WorstShortSideFit),
                 ("WorstLongSideFit", GuillotineChoice::WorstLongSideFit),
             ] {
-                let sel = state.cfg.g_choice == val;
+                let sel = state.config_draft.guillotine_choice == val;
                 if ui.selectable_label(sel, label).clicked() {
-                    state.cfg.g_choice = val;
+                    state.config_draft.guillotine_choice = val;
                     any_changed = true;
                 }
             }
@@ -511,42 +550,51 @@ fn render_advanced_algorithm(ui: &mut egui::Ui, state: &mut AppState) {
                 ("SplitShorterAxis", GuillotineSplit::SplitShorterAxis),
                 ("SplitLongerAxis", GuillotineSplit::SplitLongerAxis),
             ] {
-                let sel = state.cfg.g_split == val;
+                let sel = state.config_draft.guillotine_split == val;
                 if ui.selectable_label(sel, label).clicked() {
-                    state.cfg.g_split = val;
+                    state.config_draft.guillotine_split = val;
                     any_changed = true;
                 }
             }
         }
-        AlgorithmFamily::Auto => {
+        StrategyKind::Auto => {
             ui.label("Auto mode:");
             for (label, val) in [("Fast", AutoMode::Fast), ("Quality", AutoMode::Quality)] {
-                let sel = state.cfg.auto_mode == val;
+                let sel = state.config_draft.auto_mode == val;
                 if ui.selectable_label(sel, label).clicked() {
-                    state.cfg.auto_mode = val;
+                    state.config_draft.auto_mode = val;
                     any_changed = true;
                 }
             }
             ui.add_space(4.0);
-            let mut tb: i64 = state.cfg.time_budget_ms.unwrap_or(0) as i64;
+            let mut tb: i64 = state.config_draft.time_budget_ms.unwrap_or(0) as i64;
             ui.horizontal(|ui| {
                 ui.label("Time budget (ms, optional):");
                 let _ = ui.add(egui::DragValue::new(&mut tb).speed(50).range(0..=60_000));
             });
             let new_tb = if tb <= 0 { None } else { Some(tb as u64) };
-            if new_tb != state.cfg.time_budget_ms {
-                state.cfg.time_budget_ms = new_tb;
+            if new_tb != state.config_draft.time_budget_ms {
+                state.config_draft.time_budget_ms = new_tb;
                 any_changed = true;
             }
             any_changed |= ui
-                .toggle_value(&mut state.cfg.parallel, "Parallel (if available)")
+                .toggle_value(&mut state.config_draft.parallel, "Parallel (if available)")
                 .changed();
             any_changed |= ui
-                .toggle_value(&mut state.cfg.mr_reference, "MaxRects reference mode")
+                .toggle_value(
+                    &mut state.config_draft.max_rects_reference,
+                    "MaxRects reference mode",
+                )
                 .changed();
             ui.label("MR reference auto thresholds (optional):");
-            let mut t_ms: i64 = state.cfg.auto_mr_ref_time_ms_threshold.unwrap_or(0) as i64;
-            let mut t_n: i64 = state.cfg.auto_mr_ref_input_threshold.unwrap_or(0) as i64;
+            let mut t_ms: i64 = state
+                .config_draft
+                .auto_reference_time_threshold_ms
+                .unwrap_or(0) as i64;
+            let mut t_n: i64 = state
+                .config_draft
+                .auto_reference_input_threshold
+                .unwrap_or(0) as i64;
             ui.horizontal(|ui| {
                 let _ = ui.add(
                     egui::DragValue::new(&mut t_ms)
@@ -563,12 +611,12 @@ fn render_advanced_algorithm(ui: &mut egui::Ui, state: &mut AppState) {
             });
             let new_tms = if t_ms <= 0 { None } else { Some(t_ms as u64) };
             let new_tn = if t_n <= 0 { None } else { Some(t_n as usize) };
-            if new_tms != state.cfg.auto_mr_ref_time_ms_threshold {
-                state.cfg.auto_mr_ref_time_ms_threshold = new_tms;
+            if new_tms != state.config_draft.auto_reference_time_threshold_ms {
+                state.config_draft.auto_reference_time_threshold_ms = new_tms;
                 any_changed = true;
             }
-            if new_tn != state.cfg.auto_mr_ref_input_threshold {
-                state.cfg.auto_mr_ref_input_threshold = new_tn;
+            if new_tn != state.config_draft.auto_reference_input_threshold {
+                state.config_draft.auto_reference_input_threshold = new_tn;
                 any_changed = true;
             }
         }
@@ -586,9 +634,9 @@ fn render_advanced_sorting(ui: &mut egui::Ui, state: &mut AppState) {
         ("AreaDesc", SortOrder::AreaDesc),
         ("MaxSideDesc", SortOrder::MaxSideDesc),
     ] {
-        let sel = state.cfg.sort_order == so;
+        let sel = state.config_draft.sort_order == so;
         if ui.selectable_label(sel, label).clicked() {
-            state.cfg.sort_order = so;
+            state.config_draft.sort_order = so;
             state.mark_custom();
         }
     }

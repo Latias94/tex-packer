@@ -11,8 +11,26 @@ pub enum TexPackerError {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    #[error(
+        "Invalid dimensions for '{key}': width and height must be greater than 0 (got {width}x{height})"
+    )]
+    InvalidItemDimensions {
+        key: String,
+        width: u32,
+        height: u32,
+    },
+
+    #[error("No packable inputs remain after preprocessing: {keys:?}")]
+    NoPackableInputs { keys: Vec<String> },
+
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
+
+    #[error("Atlas invariant violation at {context}: {reason}")]
+    InvariantViolation { context: String, reason: String },
+
+    #[error("Invalid atlas document: {reason}")]
+    InvalidDocument { reason: String },
 
     #[error(
         "Texture '{key}' ({width}x{height}) exceeds maximum atlas dimensions ({max_width}x{max_height})"
@@ -48,6 +66,9 @@ pub enum TexPackerError {
 
     #[error("Invalid dimensions: width and height must be greater than 0 (got {width}x{height})")]
     InvalidDimensions { width: u32, height: u32 },
+
+    #[error("Duplicate runtime key: '{key}'")]
+    DuplicateKey { key: String },
 
     #[error(
         "Invalid padding configuration: border_padding ({border}) + texture_padding ({texture}) + texture_extrusion ({extrusion}) exceeds available space"

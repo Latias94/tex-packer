@@ -1,42 +1,12 @@
-use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use std::time::Duration;
 
-/// Algorithm families and packing configuration.
-/// Key notes:
-///   - `family` selects Skyline/MaxRects/Guillotine/Auto
-///   - `mr_reference` toggles reference-accurate MaxRects split/prune (SplitFreeNode), improving packing on large sets at higher CPU cost
-///   - `time_budget_ms` and `parallel` affect Auto portfolio evaluation
-///     Top-level algorithm families.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum AlgorithmFamily {
-    /// Skyline data structure (BL/MW; fast and good baseline). Optional waste-map recovery.
-    Skyline,
-    /// MaxRects free-list (high quality; many heuristics; best for offline).
-    MaxRects,
-    /// Guillotine splitting (flexible choice/split; competitive; useful in waste-map too).
-    Guillotine,
-    /// Try a small portfolio of candidates and pick the best result (pages, then total area).
-    Auto,
-}
-
-impl FromStr for AlgorithmFamily {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "skyline" => Ok(Self::Skyline),
-            "maxrects" => Ok(Self::MaxRects),
-            "guillotine" => Ok(Self::Guillotine),
-            "auto" => Ok(Self::Auto),
-            _ => Err(()),
-        }
-    }
-}
+use crate::error::{Result, TexPackerError};
 
 /// MaxRects placement heuristics.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum MaxRectsHeuristic {
+    #[default]
     BestAreaFit,
     BestShortSideFit,
     BestLongSideFit,
@@ -46,8 +16,9 @@ pub enum MaxRectsHeuristic {
 
 impl FromStr for MaxRectsHeuristic {
     type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
             "baf" | "bestareafit" => Ok(Self::BestAreaFit),
             "bssf" | "bestshortsidefit" => Ok(Self::BestShortSideFit),
             "blsf" | "bestlongsidefit" => Ok(Self::BestLongSideFit),
@@ -59,17 +30,18 @@ impl FromStr for MaxRectsHeuristic {
 }
 
 /// Skyline placement heuristics.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum SkylineHeuristic {
+    #[default]
     BottomLeft,
     MinWaste,
 }
 
 impl FromStr for SkylineHeuristic {
     type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
             "bl" | "bottomleft" => Ok(Self::BottomLeft),
             "minwaste" | "mw" => Ok(Self::MinWaste),
             _ => Err(()),
@@ -77,10 +49,10 @@ impl FromStr for SkylineHeuristic {
     }
 }
 
-/// Guillotine free-rect choice heuristics.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+/// Guillotine free-rectangle choice heuristics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum GuillotineChoice {
+    #[default]
     BestAreaFit,
     BestShortSideFit,
     BestLongSideFit,
@@ -91,8 +63,9 @@ pub enum GuillotineChoice {
 
 impl FromStr for GuillotineChoice {
     type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
             "baf" | "bestareafit" => Ok(Self::BestAreaFit),
             "bssf" | "bestshortsidefit" => Ok(Self::BestShortSideFit),
             "blsf" | "bestlongsidefit" => Ok(Self::BestLongSideFit),
@@ -104,10 +77,10 @@ impl FromStr for GuillotineChoice {
     }
 }
 
-/// Guillotine split axis heuristics.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+/// Guillotine split-axis heuristics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum GuillotineSplit {
+    #[default]
     SplitShorterLeftoverAxis,
     SplitLongerLeftoverAxis,
     SplitMinimizeArea,
@@ -118,8 +91,9 @@ pub enum GuillotineSplit {
 
 impl FromStr for GuillotineSplit {
     type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
             "slas" | "splitshorterleftoveraxis" => Ok(Self::SplitShorterLeftoverAxis),
             "llas" | "splitlongerleftoveraxis" => Ok(Self::SplitLongerLeftoverAxis),
             "minas" | "splitminimizearea" => Ok(Self::SplitMinimizeArea),
@@ -131,18 +105,19 @@ impl FromStr for GuillotineSplit {
     }
 }
 
-/// Auto presets.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+/// Auto portfolio presets.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum AutoMode {
     Fast,
+    #[default]
     Quality,
 }
 
 impl FromStr for AutoMode {
     type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
             "fast" => Ok(Self::Fast),
             "quality" => Ok(Self::Quality),
             _ => Err(()),
@@ -150,10 +125,10 @@ impl FromStr for AutoMode {
     }
 }
 
-/// Sorting orders for deterministic packing.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+/// Sorting orders for deterministic offline packing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum SortOrder {
+    #[default]
     AreaDesc,
     MaxSideDesc,
     HeightDesc,
@@ -164,8 +139,9 @@ pub enum SortOrder {
 
 impl FromStr for SortOrder {
     type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
             "area_desc" => Ok(Self::AreaDesc),
             "max_side_desc" => Ok(Self::MaxSideDesc),
             "height_desc" => Ok(Self::HeightDesc),
@@ -177,122 +153,252 @@ impl FromStr for SortOrder {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PackerConfig {
-    /// Maximum page width in pixels.
-    pub max_width: u32,
-    /// Maximum page height in pixels.
-    pub max_height: u32,
-    /// Allow 90° rotations for placements where beneficial.
-    pub allow_rotation: bool,
-    /// Force final page dimensions to be exactly max_width/max_height.
-    pub force_max_dimensions: bool,
-
-    /// Pixels around entire page border.
-    pub border_padding: u32,
-    /// Pixels between frames.
-    pub texture_padding: u32,
-    /// Extrude edge pixels of each frame (for sampling safety).
-    pub texture_extrusion: u32,
-
-    /// Trim transparent borders (alpha <= trim_threshold).
-    pub trim: bool,
-    pub trim_threshold: u8,
-    /// Draw red outlines on output pages (debug).
-    pub texture_outlines: bool,
-
-    /// Resize output page to power-of-two.
-    pub power_of_two: bool,
-    /// Force output page to be square (max(width,height)).
-    pub square: bool,
-    /// Use waste map in Skyline to recover gaps
-    pub use_waste_map: bool,
-
-    // algorithm selection
-    #[serde(default = "default_family")]
-    pub family: AlgorithmFamily,
-    #[serde(default = "default_mr_heuristic")]
-    pub mr_heuristic: MaxRectsHeuristic,
-    #[serde(default = "default_skyline_heuristic")]
-    pub skyline_heuristic: SkylineHeuristic,
-    #[serde(default = "default_g_choice")]
-    pub g_choice: GuillotineChoice,
-    #[serde(default = "default_g_split")]
-    pub g_split: GuillotineSplit,
-    #[serde(default = "default_auto_mode")]
-    pub auto_mode: AutoMode,
-    #[serde(default = "default_sort_order")]
-    pub sort_order: SortOrder,
-
-    // portfolio/parallel controls
-    /// Optional time budget for auto portfolio (milliseconds). None or 0 disables.
-    #[serde(default)]
-    pub time_budget_ms: Option<u64>,
-    /// Enable parallel candidate evaluation when feature "parallel" is on.
-    #[serde(default = "default_parallel")]
-    pub parallel: bool,
-
-    /// Use reference-accurate MaxRects split/prune (SplitFreeNode + staged prune).
-    /// When false, uses a simpler but correct split/prune that may create more intermediate free rects.
-    #[serde(default)]
-    pub mr_reference: bool,
-
-    /// Auto-mode: enable mr_reference when time budget >= this (ms). None => use default heuristic.
-    #[serde(default)]
-    pub auto_mr_ref_time_ms_threshold: Option<u64>,
-    /// Auto-mode: enable mr_reference when inputs >= this count. None => use default heuristic.
-    #[serde(default)]
-    pub auto_mr_ref_input_threshold: Option<usize>,
-
-    /// Policy for fully transparent images (effective when `trim=true`).
-    #[serde(default = "default_transparent_policy")]
-    pub transparent_policy: TransparentPolicy,
+/// Policy for fully transparent images when trimming is enabled.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum TransparentPolicy {
+    #[default]
+    Keep,
+    OneByOne,
+    Skip,
 }
 
-impl Default for PackerConfig {
+impl FromStr for TransparentPolicy {
+    type Err = ();
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "keep" => Ok(Self::Keep),
+            "one_by_one" | "1x1" | "onebyone" => Ok(Self::OneByOne),
+            "skip" => Ok(Self::Skip),
+            _ => Err(()),
+        }
+    }
+}
+
+/// Shelf selection policies for runtime packing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum ShelfPolicy {
+    #[default]
+    NextFit,
+    FirstFit,
+}
+
+impl FromStr for ShelfPolicy {
+    type Err = ();
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "next_fit" | "nextfit" => Ok(Self::NextFit),
+            "first_fit" | "firstfit" => Ok(Self::FirstFit),
+            _ => Err(()),
+        }
+    }
+}
+
+/// A selected offline packing strategy and only the options relevant to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackingStrategy {
+    Skyline {
+        heuristic: SkylineHeuristic,
+        use_waste_map: bool,
+    },
+    MaxRects {
+        heuristic: MaxRectsHeuristic,
+        reference: bool,
+    },
+    Guillotine {
+        choice: GuillotineChoice,
+        split: GuillotineSplit,
+    },
+    Auto {
+        mode: AutoMode,
+        time_budget: Option<Duration>,
+        parallel: bool,
+        reference_time_threshold: Option<Duration>,
+        reference_input_threshold: Option<usize>,
+    },
+}
+
+impl Default for PackingStrategy {
+    fn default() -> Self {
+        Self::Skyline {
+            heuristic: SkylineHeuristic::BottomLeft,
+            use_waste_map: false,
+        }
+    }
+}
+
+/// A selected runtime packing strategy and only the options relevant to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeStrategy {
+    Guillotine {
+        choice: GuillotineChoice,
+        split: GuillotineSplit,
+    },
+    Shelf {
+        policy: ShelfPolicy,
+    },
+    Skyline {
+        heuristic: SkylineHeuristic,
+    },
+}
+
+impl Default for RuntimeStrategy {
+    fn default() -> Self {
+        Self::Guillotine {
+            choice: GuillotineChoice::BestAreaFit,
+            split: GuillotineSplit::SplitShorterLeftoverAxis,
+        }
+    }
+}
+
+/// Validated geometry shared by offline and runtime workflows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageConfig {
+    max_width: u32,
+    max_height: u32,
+    allow_rotation: bool,
+    border_padding: u32,
+    texture_padding: u32,
+    texture_extrusion: u32,
+    usable_width: u32,
+    usable_height: u32,
+    allocation_extra: u32,
+    content_offset: u32,
+    trailing_extra: u32,
+}
+
+impl PageConfig {
+    pub fn builder() -> PageConfigBuilder {
+        PageConfigBuilder::default()
+    }
+
+    pub fn max_width(&self) -> u32 {
+        self.max_width
+    }
+
+    pub fn max_height(&self) -> u32 {
+        self.max_height
+    }
+
+    pub fn max_dimensions(&self) -> (u32, u32) {
+        (self.max_width, self.max_height)
+    }
+
+    pub fn allow_rotation(&self) -> bool {
+        self.allow_rotation
+    }
+
+    pub fn border_padding(&self) -> u32 {
+        self.border_padding
+    }
+
+    pub fn texture_padding(&self) -> u32 {
+        self.texture_padding
+    }
+
+    pub fn texture_extrusion(&self) -> u32 {
+        self.texture_extrusion
+    }
+
+    pub(crate) fn usable_dimensions(&self) -> (u32, u32) {
+        (self.usable_width, self.usable_height)
+    }
+
+    pub(crate) fn content_offset(&self) -> u32 {
+        self.content_offset
+    }
+
+    pub(crate) fn trailing_extra(&self) -> u32 {
+        self.trailing_extra
+    }
+
+    pub(crate) fn checked_reservation(
+        &self,
+        content_width: u32,
+        content_height: u32,
+    ) -> Option<(u32, u32)> {
+        Some((
+            content_width.checked_add(self.allocation_extra)?,
+            content_height.checked_add(self.allocation_extra)?,
+        ))
+    }
+}
+
+impl Default for PageConfig {
     fn default() -> Self {
         Self {
             max_width: 1024,
             max_height: 1024,
             allow_rotation: true,
-            force_max_dimensions: false,
             border_padding: 0,
             texture_padding: 2,
             texture_extrusion: 0,
-            trim: true,
-            trim_threshold: 0,
-            texture_outlines: false,
-            power_of_two: false,
-            square: false,
-            use_waste_map: false,
-            family: default_family(),
-            mr_heuristic: default_mr_heuristic(),
-            skyline_heuristic: default_skyline_heuristic(),
-            g_choice: default_g_choice(),
-            g_split: default_g_split(),
-            auto_mode: default_auto_mode(),
-            sort_order: default_sort_order(),
-            time_budget_ms: None,
-            parallel: default_parallel(),
-            mr_reference: false,
-            auto_mr_ref_time_ms_threshold: None,
-            auto_mr_ref_input_threshold: None,
-            transparent_policy: default_transparent_policy(),
+            usable_width: 1024,
+            usable_height: 1024,
+            allocation_extra: 2,
+            content_offset: 1,
+            trailing_extra: 1,
         }
     }
 }
 
-impl PackerConfig {
-    /// Validates the configuration parameters.
-    ///
-    /// Returns an error if:
-    /// - Dimensions are zero or invalid
-    /// - Padding configuration would leave no usable space
-    /// - Other configuration constraints are violated
-    pub fn validate(&self) -> crate::error::Result<()> {
-        use crate::error::TexPackerError;
+/// Builder for [`PageConfig`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageConfigBuilder {
+    max_width: u32,
+    max_height: u32,
+    allow_rotation: bool,
+    border_padding: u32,
+    texture_padding: u32,
+    texture_extrusion: u32,
+}
 
-        // Validate dimensions
+impl Default for PageConfigBuilder {
+    fn default() -> Self {
+        Self {
+            max_width: 1024,
+            max_height: 1024,
+            allow_rotation: true,
+            border_padding: 0,
+            texture_padding: 2,
+            texture_extrusion: 0,
+        }
+    }
+}
+
+impl PageConfigBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn max_dimensions(mut self, width: u32, height: u32) -> Self {
+        self.max_width = width;
+        self.max_height = height;
+        self
+    }
+
+    pub fn allow_rotation(mut self, enabled: bool) -> Self {
+        self.allow_rotation = enabled;
+        self
+    }
+
+    pub fn border_padding(mut self, pixels: u32) -> Self {
+        self.border_padding = pixels;
+        self
+    }
+
+    pub fn texture_padding(mut self, pixels: u32) -> Self {
+        self.texture_padding = pixels;
+        self
+    }
+
+    pub fn texture_extrusion(mut self, pixels: u32) -> Self {
+        self.texture_extrusion = pixels;
+        self
+    }
+
+    pub fn build(self) -> Result<PageConfig> {
         if self.max_width == 0 || self.max_height == 0 {
             return Err(TexPackerError::InvalidDimensions {
                 width: self.max_width,
@@ -300,216 +406,365 @@ impl PackerConfig {
             });
         }
 
-        // Validate padding doesn't exceed available space
-        let total_border = self.border_padding.saturating_mul(2);
-        let total_padding_per_texture = self
-            .texture_padding
-            .saturating_add(self.texture_extrusion.saturating_mul(2));
-
-        if total_border >= self.max_width || total_border >= self.max_height {
-            return Err(TexPackerError::InvalidConfig(format!(
-                "border_padding ({}) * 2 exceeds atlas dimensions ({}x{})",
+        let border_twice = self.border_padding.checked_mul(2).ok_or_else(|| {
+            invalid_config("border_padding overflows while reserving both page edges")
+        })?;
+        if border_twice >= self.max_width || border_twice >= self.max_height {
+            return Err(invalid_config(format!(
+                "border_padding ({}) leaves no usable area in {}x{}",
                 self.border_padding, self.max_width, self.max_height
             )));
         }
 
-        // Check if there's at least 1x1 pixel of usable space after borders
-        let usable_width = self.max_width.saturating_sub(total_border);
-        let usable_height = self.max_height.saturating_sub(total_border);
+        let usable_width = self.max_width - border_twice;
+        let usable_height = self.max_height - border_twice;
+        let allocation_extra = self
+            .texture_extrusion
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(self.texture_padding))
+            .ok_or_else(|| {
+                invalid_config(
+                    "texture padding and extrusion overflow the coordinate representation",
+                )
+            })?;
+        let leading_padding = self.texture_padding / 2;
+        let trailing_padding = self.texture_padding - leading_padding;
+        let content_offset = self
+            .texture_extrusion
+            .checked_add(leading_padding)
+            .ok_or_else(|| {
+                invalid_config("content offset overflows the coordinate representation")
+            })?;
+        let trailing_extra = self
+            .texture_extrusion
+            .checked_add(trailing_padding)
+            .ok_or_else(|| {
+                invalid_config("trailing reservation overflows the coordinate representation")
+            })?;
+        let minimum_reservation = allocation_extra.checked_add(1).ok_or_else(|| {
+            invalid_config(
+                "a one-pixel texture reservation overflows the coordinate representation",
+            )
+        })?;
 
-        if usable_width == 0 || usable_height == 0 {
-            return Err(TexPackerError::InvalidConfig(format!(
-                "No usable space after border_padding: {}x{} - {} * 2 = {}x{}",
-                self.max_width, self.max_height, self.border_padding, usable_width, usable_height
+        if minimum_reservation > usable_width || minimum_reservation > usable_height {
+            return Err(invalid_config(format!(
+                "padding and extrusion require at least {minimum_reservation}x{minimum_reservation} pixels, but only {usable_width}x{usable_height} are usable"
             )));
         }
 
-        // Warn if padding per texture is very large relative to atlas size
-        if total_padding_per_texture > usable_width / 2
-            || total_padding_per_texture > usable_height / 2
-        {
-            // This is not an error, but might indicate misconfiguration
-            // We'll allow it but it might result in poor packing
-        }
-
-        // trim_threshold is u8, so it's always valid (0-255)
-
-        Ok(())
+        Ok(PageConfig {
+            max_width: self.max_width,
+            max_height: self.max_height,
+            allow_rotation: self.allow_rotation,
+            border_padding: self.border_padding,
+            texture_padding: self.texture_padding,
+            texture_extrusion: self.texture_extrusion,
+            usable_width,
+            usable_height,
+            allocation_extra,
+            content_offset,
+            trailing_extra,
+        })
     }
 }
 
-fn default_family() -> AlgorithmFamily {
-    AlgorithmFamily::Skyline
-}
-fn default_mr_heuristic() -> MaxRectsHeuristic {
-    MaxRectsHeuristic::BestAreaFit
-}
-fn default_skyline_heuristic() -> SkylineHeuristic {
-    SkylineHeuristic::BottomLeft
-}
-fn default_g_choice() -> GuillotineChoice {
-    GuillotineChoice::BestAreaFit
-}
-fn default_g_split() -> GuillotineSplit {
-    GuillotineSplit::SplitShorterLeftoverAxis
-}
-fn default_auto_mode() -> AutoMode {
-    AutoMode::Quality
-}
-fn default_sort_order() -> SortOrder {
-    SortOrder::AreaDesc
-}
-fn default_parallel() -> bool {
-    false
-}
-fn default_transparent_policy() -> TransparentPolicy {
-    TransparentPolicy::Keep
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrimProjection {
+    Disabled,
+    Enabled {
+        threshold: u8,
+        transparent_policy: TransparentPolicy,
+    },
 }
 
-/// Builder for `PackerConfig` for ergonomic construction.
-#[derive(Debug, Default, Clone)]
-pub struct PackerConfigBuilder {
-    cfg: PackerConfig,
+/// Validated configuration for offline image and layout workflows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfflineConfig {
+    page: PageConfig,
+    force_max_dimensions: bool,
+    power_of_two: bool,
+    square: bool,
+    trim: TrimProjection,
+    outlines: bool,
+    sort_order: SortOrder,
+    strategy: PackingStrategy,
 }
 
-impl PackerConfigBuilder {
-    pub fn new() -> Self {
+impl OfflineConfig {
+    pub fn builder() -> OfflineConfigBuilder {
+        OfflineConfigBuilder::default()
+    }
+
+    pub fn page_config(&self) -> &PageConfig {
+        &self.page
+    }
+
+    pub fn force_max_dimensions(&self) -> bool {
+        self.force_max_dimensions
+    }
+
+    pub fn power_of_two(&self) -> bool {
+        self.power_of_two
+    }
+
+    pub fn square(&self) -> bool {
+        self.square
+    }
+
+    pub fn trim_enabled(&self) -> bool {
+        matches!(self.trim, TrimProjection::Enabled { .. })
+    }
+
+    pub fn trim_threshold(&self) -> Option<u8> {
+        match self.trim {
+            TrimProjection::Disabled => None,
+            TrimProjection::Enabled { threshold, .. } => Some(threshold),
+        }
+    }
+
+    pub fn transparent_policy(&self) -> Option<TransparentPolicy> {
+        match self.trim {
+            TrimProjection::Disabled => None,
+            TrimProjection::Enabled {
+                transparent_policy, ..
+            } => Some(transparent_policy),
+        }
+    }
+
+    pub fn outlines(&self) -> bool {
+        self.outlines
+    }
+
+    pub fn sort_order(&self) -> SortOrder {
+        self.sort_order
+    }
+
+    pub fn strategy(&self) -> &PackingStrategy {
+        &self.strategy
+    }
+}
+
+impl Default for OfflineConfig {
+    fn default() -> Self {
         Self {
-            cfg: PackerConfig::default(),
+            page: PageConfig::default(),
+            force_max_dimensions: false,
+            power_of_two: false,
+            square: false,
+            trim: TrimProjection::Enabled {
+                threshold: 0,
+                transparent_policy: TransparentPolicy::Keep,
+            },
+            outlines: false,
+            sort_order: SortOrder::AreaDesc,
+            strategy: PackingStrategy::default(),
         }
-    }
-    pub fn with_max_dimensions(mut self, w: u32, h: u32) -> Self {
-        self.cfg.max_width = w;
-        self.cfg.max_height = h;
-        self
-    }
-    pub fn allow_rotation(mut self, v: bool) -> Self {
-        self.cfg.allow_rotation = v;
-        self
-    }
-    pub fn force_max_dimensions(mut self, v: bool) -> Self {
-        self.cfg.force_max_dimensions = v;
-        self
-    }
-    pub fn border_padding(mut self, v: u32) -> Self {
-        self.cfg.border_padding = v;
-        self
-    }
-    pub fn texture_padding(mut self, v: u32) -> Self {
-        self.cfg.texture_padding = v;
-        self
-    }
-    pub fn texture_extrusion(mut self, v: u32) -> Self {
-        self.cfg.texture_extrusion = v;
-        self
-    }
-    pub fn trim(mut self, v: bool) -> Self {
-        self.cfg.trim = v;
-        self
-    }
-    pub fn trim_threshold(mut self, v: u8) -> Self {
-        self.cfg.trim_threshold = v;
-        self
-    }
-    pub fn outlines(mut self, v: bool) -> Self {
-        self.cfg.texture_outlines = v;
-        self
-    }
-    pub fn pow2(mut self, v: bool) -> Self {
-        self.cfg.power_of_two = v;
-        self
-    }
-    pub fn square(mut self, v: bool) -> Self {
-        self.cfg.square = v;
-        self
-    }
-    pub fn family(mut self, v: AlgorithmFamily) -> Self {
-        self.cfg.family = v;
-        self
-    }
-    pub fn skyline_heuristic(mut self, v: SkylineHeuristic) -> Self {
-        self.cfg.skyline_heuristic = v;
-        self
-    }
-    pub fn mr_heuristic(mut self, v: MaxRectsHeuristic) -> Self {
-        self.cfg.mr_heuristic = v;
-        self
-    }
-    pub fn g_choice(mut self, v: GuillotineChoice) -> Self {
-        self.cfg.g_choice = v;
-        self
-    }
-    pub fn g_split(mut self, v: GuillotineSplit) -> Self {
-        self.cfg.g_split = v;
-        self
-    }
-    pub fn auto_mode(mut self, v: AutoMode) -> Self {
-        self.cfg.auto_mode = v;
-        self
-    }
-    pub fn sort_order(mut self, v: SortOrder) -> Self {
-        self.cfg.sort_order = v;
-        self
-    }
-    pub fn time_budget_ms(mut self, v: Option<u64>) -> Self {
-        self.cfg.time_budget_ms = v;
-        self
-    }
-    pub fn parallel(mut self, v: bool) -> Self {
-        self.cfg.parallel = v;
-        self
-    }
-    pub fn mr_reference(mut self, v: bool) -> Self {
-        self.cfg.mr_reference = v;
-        self
-    }
-    pub fn auto_mr_ref_time_ms_threshold(mut self, v: Option<u64>) -> Self {
-        self.cfg.auto_mr_ref_time_ms_threshold = v;
-        self
-    }
-    pub fn auto_mr_ref_input_threshold(mut self, v: Option<usize>) -> Self {
-        self.cfg.auto_mr_ref_input_threshold = v;
-        self
-    }
-    pub fn use_waste_map(mut self, v: bool) -> Self {
-        self.cfg.use_waste_map = v;
-        self
-    }
-    pub fn transparent_policy(mut self, v: TransparentPolicy) -> Self {
-        self.cfg.transparent_policy = v;
-        self
-    }
-    pub fn build(self) -> PackerConfig {
-        self.cfg
     }
 }
 
-impl PackerConfig {
-    /// Create a fluent builder for `PackerConfig`.
-    pub fn builder() -> PackerConfigBuilder {
-        PackerConfigBuilder::new()
-    }
-}
-/// Policy for fully transparent images when trimming is enabled and no opaque pixel is found.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TransparentPolicy {
-    /// Keep original dimensions (status quo)
-    Keep,
-    /// Reduce to a 1x1 transparent pixel
-    OneByOne,
-    /// Skip this input entirely
-    Skip,
+/// Builder for [`OfflineConfig`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfflineConfigBuilder {
+    page: PageConfig,
+    force_max_dimensions: bool,
+    power_of_two: bool,
+    square: bool,
+    trim: bool,
+    trim_threshold: u8,
+    transparent_policy: TransparentPolicy,
+    outlines: bool,
+    sort_order: SortOrder,
+    strategy: PackingStrategy,
 }
 
-impl FromStr for TransparentPolicy {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "keep" => Ok(Self::Keep),
-            "one_by_one" | "1x1" | "onebyone" => Ok(Self::OneByOne),
-            "skip" => Ok(Self::Skip),
-            _ => Err(()),
+impl Default for OfflineConfigBuilder {
+    fn default() -> Self {
+        Self {
+            page: PageConfig::default(),
+            force_max_dimensions: false,
+            power_of_two: false,
+            square: false,
+            trim: true,
+            trim_threshold: 0,
+            transparent_policy: TransparentPolicy::Keep,
+            outlines: false,
+            sort_order: SortOrder::AreaDesc,
+            strategy: PackingStrategy::default(),
         }
     }
+}
+
+impl OfflineConfigBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn page_config(mut self, config: PageConfig) -> Self {
+        self.page = config;
+        self
+    }
+
+    pub fn force_max_dimensions(mut self, enabled: bool) -> Self {
+        self.force_max_dimensions = enabled;
+        self
+    }
+
+    pub fn power_of_two(mut self, enabled: bool) -> Self {
+        self.power_of_two = enabled;
+        self
+    }
+
+    pub fn square(mut self, enabled: bool) -> Self {
+        self.square = enabled;
+        self
+    }
+
+    pub fn trim(mut self, enabled: bool) -> Self {
+        self.trim = enabled;
+        self
+    }
+
+    pub fn trim_threshold(mut self, threshold: u8) -> Self {
+        self.trim_threshold = threshold;
+        self
+    }
+
+    pub fn transparent_policy(mut self, policy: TransparentPolicy) -> Self {
+        self.transparent_policy = policy;
+        self
+    }
+
+    pub fn outlines(mut self, enabled: bool) -> Self {
+        self.outlines = enabled;
+        self
+    }
+
+    pub fn sort_order(mut self, order: SortOrder) -> Self {
+        self.sort_order = order;
+        self
+    }
+
+    pub fn strategy(mut self, strategy: PackingStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    pub fn build(self) -> Result<OfflineConfig> {
+        if self.power_of_two && !self.force_max_dimensions {
+            self.page
+                .max_width
+                .checked_next_power_of_two()
+                .ok_or_else(|| {
+                    invalid_config(format!(
+                        "power-of-two page width overflows for maximum width {}",
+                        self.page.max_width
+                    ))
+                })?;
+            self.page
+                .max_height
+                .checked_next_power_of_two()
+                .ok_or_else(|| {
+                    invalid_config(format!(
+                        "power-of-two page height overflows for maximum height {}",
+                        self.page.max_height
+                    ))
+                })?;
+        }
+
+        let trim = if self.trim {
+            TrimProjection::Enabled {
+                threshold: self.trim_threshold,
+                transparent_policy: self.transparent_policy,
+            }
+        } else {
+            TrimProjection::Disabled
+        };
+        let strategy = normalize_strategy(self.strategy);
+
+        Ok(OfflineConfig {
+            page: self.page,
+            force_max_dimensions: self.force_max_dimensions,
+            power_of_two: self.power_of_two,
+            square: self.square,
+            trim,
+            outlines: self.outlines,
+            sort_order: self.sort_order,
+            strategy,
+        })
+    }
+}
+
+fn normalize_strategy(strategy: PackingStrategy) -> PackingStrategy {
+    match strategy {
+        PackingStrategy::Auto {
+            mode,
+            time_budget,
+            parallel,
+            reference_time_threshold,
+            reference_input_threshold,
+        } => PackingStrategy::Auto {
+            mode,
+            time_budget: time_budget.filter(|budget| !budget.is_zero()),
+            parallel,
+            reference_time_threshold,
+            reference_input_threshold,
+        },
+        other => other,
+    }
+}
+
+/// Validated configuration for runtime atlas workflows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeConfig {
+    page: PageConfig,
+    strategy: RuntimeStrategy,
+}
+
+impl RuntimeConfig {
+    pub fn builder() -> RuntimeConfigBuilder {
+        RuntimeConfigBuilder::default()
+    }
+
+    pub fn page_config(&self) -> &PageConfig {
+        &self.page
+    }
+
+    pub fn strategy(&self) -> &RuntimeStrategy {
+        &self.strategy
+    }
+}
+
+/// Builder for [`RuntimeConfig`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeConfigBuilder {
+    page: PageConfig,
+    strategy: RuntimeStrategy,
+}
+
+impl RuntimeConfigBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn page_config(mut self, config: PageConfig) -> Self {
+        self.page = config;
+        self
+    }
+
+    pub fn strategy(mut self, strategy: RuntimeStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    pub fn build(self) -> Result<RuntimeConfig> {
+        Ok(RuntimeConfig {
+            page: self.page,
+            strategy: self.strategy,
+        })
+    }
+}
+
+fn invalid_config(message: impl Into<String>) -> TexPackerError {
+    TexPackerError::InvalidConfig(message.into())
 }

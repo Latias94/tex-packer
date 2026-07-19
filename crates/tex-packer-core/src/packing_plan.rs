@@ -41,11 +41,18 @@ impl PackingPlan {
     }
 
     pub(crate) fn deduplicated(prepared: &[PreparedItem<RgbaImage>]) -> Self {
+        Self::deduplicated_by(prepared, content_fingerprint)
+    }
+
+    fn deduplicated_by(
+        prepared: &[PreparedItem<RgbaImage>],
+        fingerprint_for: impl Fn(&PreparedItem<RgbaImage>) -> ContentFingerprint,
+    ) -> Self {
         let mut groups: Vec<PlacementGroup> = Vec::new();
         let mut buckets: HashMap<ContentFingerprint, Vec<usize>> = HashMap::new();
 
         for item_index in 0..prepared.len() {
-            let fingerprint = content_fingerprint(&prepared[item_index]);
+            let fingerprint = fingerprint_for(&prepared[item_index]);
             let matching_group = buckets.get(&fingerprint).and_then(|group_indices| {
                 group_indices.iter().copied().find(|&group_index| {
                     let canonical_index = groups[group_index].canonical_item_index;
@@ -111,4 +118,47 @@ fn content_row(item: &PreparedItem<RgbaImage>, row: u32) -> &[u8] {
     let start = (y * image_width + item.source.x as usize) * 4;
     let end = start + item.source.w as usize * 4;
     &item.payload.as_raw()[start..end]
+}
+
+#[cfg(test)]
+mod tests {
+    use image::{Rgba, RgbaImage};
+
+    use super::{ContentFingerprint, PackingPlan};
+    use crate::model::Rect;
+    use crate::preparation::PreparedItem;
+
+    #[test]
+    fn hash_collision_falls_back_to_content_bytes() {
+        let prepared = vec![
+            prepared_pixel("red", [255, 0, 0, 255]),
+            prepared_pixel("blue", [0, 0, 255, 255]),
+            prepared_pixel("red-alias", [255, 0, 0, 255]),
+        ];
+        let forced_collision = ContentFingerprint {
+            width: 1,
+            height: 1,
+            hash: 7,
+        };
+
+        let plan = PackingPlan::deduplicated_by(&prepared, |_| forced_collision);
+
+        assert_eq!(plan.groups.len(), 2);
+        assert_eq!(plan.groups[0].canonical_item_index, 0);
+        assert_eq!(plan.groups[0].alias_item_indices, vec![2]);
+        assert_eq!(plan.groups[1].canonical_item_index, 1);
+        assert!(plan.groups[1].alias_item_indices.is_empty());
+    }
+
+    fn prepared_pixel(key: &str, pixel: [u8; 4]) -> PreparedItem<RgbaImage> {
+        let rect = Rect::new(0, 0, 1, 1);
+        PreparedItem {
+            key: key.to_string(),
+            payload: RgbaImage::from_pixel(1, 1, Rgba(pixel)),
+            rect,
+            trimmed: false,
+            source: rect,
+            orig_size: (1, 1),
+        }
+    }
 }

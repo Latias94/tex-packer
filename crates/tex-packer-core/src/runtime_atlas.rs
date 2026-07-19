@@ -1,29 +1,26 @@
-use crate::config::PackerConfig;
-use crate::error::{Result, TexPackerError};
-use crate::model::Frame;
-use crate::runtime::{AtlasSession, RuntimeStats, RuntimeStrategy};
+use std::collections::HashMap;
+
 use image::{Rgba, RgbaImage};
 
-/// Region that needs to be updated on GPU texture.
+use crate::config::RuntimeConfig;
+use crate::error::{Result, TexPackerError};
+use crate::model::{Atlas, PageId, Rect};
+use crate::runtime::{AtlasSession, PreparedAppend, RuntimePlacement, RuntimeStats};
+
+/// Region that needs to be updated on a GPU texture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UpdateRegion {
-    /// Page ID that needs updating.
-    pub page_id: usize,
-    /// X coordinate of the region.
+    pub page_id: PageId,
     pub x: u32,
-    /// Y coordinate of the region.
     pub y: u32,
-    /// Width of the region.
     pub width: u32,
-    /// Height of the region.
     pub height: u32,
 }
 
 impl UpdateRegion {
-    /// Create an empty update region.
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
-            page_id: 0,
+            page_id: PageId::new(0),
             x: 0,
             y: 0,
             width: 0,
@@ -31,149 +28,148 @@ impl UpdateRegion {
         }
     }
 
-    /// Check if this region is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.width == 0 || self.height == 0
     }
 
-    /// Get the area of this region in pixels.
-    pub fn area(&self) -> u64 {
-        (self.width as u64) * (self.height as u64)
+    pub const fn area(&self) -> u64 {
+        self.width as u64 * self.height as u64
     }
+}
+
+/// Result of uploading an image into a runtime atlas.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeImageUpdate {
+    placement: RuntimePlacement,
+    dirty_region: UpdateRegion,
+}
+
+impl RuntimeImageUpdate {
+    pub const fn placement(&self) -> &RuntimePlacement {
+        &self.placement
+    }
+
+    pub const fn dirty_region(&self) -> UpdateRegion {
+        self.dirty_region
+    }
+}
+
+struct RuntimeImagePage {
+    id: PageId,
+    image: RgbaImage,
+}
+
+enum PreparedPixels {
+    Patch {
+        page_index: usize,
+        region: UpdateRegion,
+        pixels: RgbaImage,
+    },
+    New(RuntimeImagePage),
 }
 
 /// Runtime atlas with pixel data management.
-///
-/// This extends `AtlasSession` by managing actual pixel data in addition to geometry.
-/// Useful for game engines that need to dynamically update GPU textures.
 pub struct RuntimeAtlas {
     session: AtlasSession,
-    pages: Vec<RgbaImage>,
+    pages: Vec<RuntimeImagePage>,
+    page_slots: HashMap<PageId, usize>,
     background_color: Rgba<u8>,
+    outlines: bool,
 }
 
 impl RuntimeAtlas {
-    /// Create a new runtime atlas with pixel data management.
-    pub fn new(cfg: PackerConfig, strategy: RuntimeStrategy) -> Self {
+    pub fn new(cfg: RuntimeConfig) -> Self {
         Self {
-            session: AtlasSession::new(cfg, strategy),
+            session: AtlasSession::new(cfg),
             pages: Vec::new(),
-            background_color: Rgba([0, 0, 0, 0]), // Transparent by default
+            page_slots: HashMap::new(),
+            background_color: Rgba([0, 0, 0, 0]),
+            outlines: false,
         }
     }
 
-    /// Set the background color for new pages.
     pub fn with_background_color(mut self, color: Rgba<u8>) -> Self {
         self.background_color = color;
         self
     }
 
-    /// Append a texture with its pixel data.
-    /// Returns (page_id, frame, update_region).
+    pub fn with_outlines(mut self, enabled: bool) -> Self {
+        self.outlines = enabled;
+        self
+    }
+
     pub fn append_with_image(
         &mut self,
         key: String,
         image: &RgbaImage,
-    ) -> Result<(usize, Frame<String>, UpdateRegion)> {
-        let (w, h) = image.dimensions();
-        let (page_id, frame) = self.session.append(key, w, h)?;
+    ) -> Result<RuntimeImageUpdate> {
+        let (width, height) = image.dimensions();
+        let prepared_append = self.session.prepare_append(key, width, height)?;
+        let (prepared_pixels, dirty_region) = self.prepare_pixels(&prepared_append, image)?;
+        let placement = self.commit_image_append(prepared_append, prepared_pixels);
 
-        // Ensure page exists
-        self.ensure_page(page_id);
-
-        // Blit image to page
-        let update_region = self.blit_to_page(page_id, &frame, image)?;
-
-        Ok((page_id, frame, update_region))
+        Ok(RuntimeImageUpdate {
+            placement,
+            dirty_region,
+        })
     }
 
-    /// Append a texture by dimensions only (no pixel data).
-    /// Returns (page_id, frame).
-    pub fn append(&mut self, key: String, w: u32, h: u32) -> Result<(usize, Frame<String>)> {
+    pub fn append(&mut self, key: String, w: u32, h: u32) -> Result<RuntimePlacement> {
         self.session.append(key, w, h)
     }
 
-    /// Evict a texture and optionally clear its region.
-    /// Returns the region that was cleared (if clear=true).
     pub fn evict_with_clear(
         &mut self,
-        page_id: usize,
+        page_id: PageId,
         key: &str,
         clear: bool,
     ) -> Option<UpdateRegion> {
-        // Get reserved slot before evicting (covers padding/extrude)
-        let slot_region = if clear {
-            self.session
-                .get_reserved_slot(key)
-                .map(|(pid, slot)| UpdateRegion {
-                    page_id: pid,
-                    x: slot.x,
-                    y: slot.y,
-                    width: slot.w,
-                    height: slot.h,
-                })
-        } else {
-            None
-        };
+        let allocation = clear.then(|| self.session.get_reserved_slot(key)).flatten();
 
-        // Evict from session
-        if self.session.evict(page_id, key) {
-            // Clear pixels if requested
-            if clear && let Some(region) = slot_region {
-                self.clear_region(region);
-                return Some(region);
-            }
-            Some(UpdateRegion::empty())
+        if !self.session.evict(page_id, key) {
+            return None;
+        }
+
+        if let Some((allocation_page_id, rect)) = allocation {
+            let region = update_region(allocation_page_id, rect);
+            self.clear_region(region);
+            Some(region)
         } else {
-            None
+            Some(UpdateRegion::empty())
         }
     }
 
-    /// Evict a texture by key and optionally clear its region.
     pub fn evict_by_key_with_clear(&mut self, key: &str, clear: bool) -> Option<UpdateRegion> {
-        // Get reserved slot before evicting
-        let slot_region = if clear {
-            self.session
-                .get_reserved_slot(key)
-                .map(|(page_id, slot)| UpdateRegion {
-                    page_id,
-                    x: slot.x,
-                    y: slot.y,
-                    width: slot.w,
-                    height: slot.h,
-                })
-        } else {
-            None
-        };
+        let allocation = clear.then(|| self.session.get_reserved_slot(key)).flatten();
 
-        if self.session.evict_by_key(key) {
-            if clear && let Some(region) = slot_region {
-                self.clear_region(region);
-                return Some(region);
-            }
-            Some(UpdateRegion::empty())
+        if !self.session.evict_by_key(key) {
+            return None;
+        }
+
+        if let Some((page_id, rect)) = allocation {
+            let region = update_region(page_id, rect);
+            self.clear_region(region);
+            Some(region)
         } else {
-            None
+            Some(UpdateRegion::empty())
         }
     }
 
-    /// Get a reference to the pixel data of a page.
-    pub fn get_page_image(&self, page_id: usize) -> Option<&RgbaImage> {
-        self.pages.get(page_id)
+    pub fn get_page_image(&self, page_id: PageId) -> Option<&RgbaImage> {
+        let page_slot = *self.page_slots.get(&page_id)?;
+        self.pages.get(page_slot).map(|page| &page.image)
     }
 
-    /// Get a mutable reference to the pixel data of a page.
-    pub fn get_page_image_mut(&mut self, page_id: usize) -> Option<&mut RgbaImage> {
-        self.pages.get_mut(page_id)
+    pub fn get_page_image_mut(&mut self, page_id: PageId) -> Option<&mut RgbaImage> {
+        let page_slot = *self.page_slots.get(&page_id)?;
+        self.pages.get_mut(page_slot).map(|page| &mut page.image)
     }
 
-    /// Get the number of pages with pixel data.
     pub fn num_pages(&self) -> usize {
         self.pages.len()
     }
 
-    // Delegate query methods to session
-    pub fn get_frame(&self, key: &str) -> Option<(usize, &Frame<String>)> {
+    pub fn get_frame(&self, key: &str) -> Option<RuntimePlacement> {
         self.session.get_frame(key)
     }
 
@@ -193,80 +189,231 @@ impl RuntimeAtlas {
         self.session.stats()
     }
 
-    pub fn snapshot_atlas(&self) -> crate::model::Atlas<String> {
+    pub fn snapshot_atlas(&self) -> Result<Atlas> {
         self.session.snapshot_atlas()
     }
 
-    /// Ensure a page exists, creating it if necessary.
-    fn ensure_page(&mut self, page_id: usize) {
-        while self.pages.len() <= page_id {
-            let page_img = RgbaImage::from_pixel(
-                self.session.cfg.max_width,
-                self.session.cfg.max_height,
+    fn prepare_pixels(
+        &self,
+        prepared_append: &PreparedAppend,
+        image: &RgbaImage,
+    ) -> Result<(PreparedPixels, UpdateRegion)> {
+        let placement = prepared_append.placement();
+        let page_id = placement.page_id();
+        let extrusion = self.session.cfg.page_config().texture_extrusion();
+        let page_size = prepared_append.page_size();
+        let dirty_region = validate_blit(placement, image, page_size, extrusion)?;
+
+        if let Some(&page_index) = self.page_slots.get(&page_id) {
+            let page =
+                self.pages
+                    .get(page_index)
+                    .ok_or_else(|| TexPackerError::InvariantViolation {
+                        context: format!("runtime image page {page_id}"),
+                        reason: format!("page index references missing slot {page_index}"),
+                    })?;
+            if page.image.dimensions() != page_size {
+                return Err(TexPackerError::InvariantViolation {
+                    context: format!("runtime image page {page_id}"),
+                    reason: format!(
+                        "pixel buffer dimensions {:?} do not match geometry page {:?}",
+                        page.image.dimensions(),
+                        page_size
+                    ),
+                });
+            }
+
+            let mut pixels = RgbaImage::from_pixel(
+                dirty_region.width,
+                dirty_region.height,
                 self.background_color,
             );
-            self.pages.push(page_img);
+            let content = placement.content();
+            blit_staged(
+                image,
+                &mut pixels,
+                Rect::new(
+                    content.x - dirty_region.x,
+                    content.y - dirty_region.y,
+                    content.w,
+                    content.h,
+                ),
+                placement.rotated(),
+                extrusion,
+                self.outlines,
+            );
+            Ok((
+                PreparedPixels::Patch {
+                    page_index,
+                    region: dirty_region,
+                    pixels,
+                },
+                dirty_region,
+            ))
+        } else {
+            let mut pixels = RgbaImage::from_pixel(page_size.0, page_size.1, self.background_color);
+            blit_staged(
+                image,
+                &mut pixels,
+                placement.content(),
+                placement.rotated(),
+                extrusion,
+                self.outlines,
+            );
+            Ok((
+                PreparedPixels::New(RuntimeImagePage {
+                    id: page_id,
+                    image: pixels,
+                }),
+                dirty_region,
+            ))
         }
     }
 
-    /// Blit an image to a page at the frame's position.
-    fn blit_to_page(
-        &mut self,
-        page_id: usize,
-        frame: &Frame<String>,
-        image: &RgbaImage,
-    ) -> Result<UpdateRegion> {
-        let page = self
-            .pages
-            .get_mut(page_id)
-            .ok_or_else(|| TexPackerError::InvalidConfig("Page not found".into()))?;
-
-        let (src_w, src_h) = image.dimensions();
-        let dst_x = frame.frame.x;
-        let dst_y = frame.frame.y;
-
-        // Reuse core compositing (with extrusion and optional outlines)
-        let extrude = self.session.cfg.texture_extrusion;
-        let outlines = self.session.cfg.texture_outlines;
-        let dst = crate::compositing::BlitRect::new(dst_x, dst_y, frame.frame.w, frame.frame.h);
-        let src = crate::compositing::BlitRect::new(0, 0, src_w, src_h);
-        let options = crate::compositing::BlitOptions {
-            rotated: frame.rotated,
-            extrude,
-            outlines,
-        };
-        crate::compositing::blit_rgba(image, page, dst, src, options);
-
-        // Return the minimal update region including extrusion
-        let start_x = dst_x.saturating_sub(extrude);
-        let start_y = dst_y.saturating_sub(extrude);
-        let mut width = frame.frame.w + extrude.saturating_mul(2);
-        let mut height = frame.frame.h + extrude.saturating_mul(2);
-        // Clamp to page bounds
-        if start_x + width > page.width() {
-            width = page.width() - start_x;
-        }
-        if start_y + height > page.height() {
-            height = page.height() - start_y;
-        }
-
-        Ok(UpdateRegion {
-            page_id,
-            x: start_x,
-            y: start_y,
-            width,
-            height,
-        })
-    }
-
-    /// Clear a region on a page.
-    fn clear_region(&mut self, region: UpdateRegion) {
-        if let Some(page) = self.pages.get_mut(region.page_id) {
-            for y in region.y..(region.y + region.height).min(page.height()) {
-                for x in region.x..(region.x + region.width).min(page.width()) {
-                    page.put_pixel(x, y, self.background_color);
+    fn commit_pixels(&mut self, prepared: PreparedPixels) {
+        match prepared {
+            PreparedPixels::Patch {
+                page_index,
+                region,
+                pixels,
+            } => {
+                let page = &mut self.pages[page_index].image;
+                for (x, y, pixel) in pixels.enumerate_pixels() {
+                    page.put_pixel(region.x + x, region.y + y, *pixel);
                 }
             }
+            PreparedPixels::New(page) => {
+                let page_id = page.id;
+                let page_slot = self.pages.len();
+                self.pages.push(page);
+                let replaced = self.page_slots.insert(page_id, page_slot);
+                debug_assert!(replaced.is_none(), "new pixel page identity must be unique");
+            }
         }
+    }
+
+    fn commit_image_append(
+        &mut self,
+        prepared_append: PreparedAppend,
+        prepared_pixels: PreparedPixels,
+    ) -> RuntimePlacement {
+        let placement = self.session.commit_append(prepared_append);
+        self.commit_pixels(prepared_pixels);
+        placement
+    }
+
+    fn clear_region(&mut self, region: UpdateRegion) {
+        let background_color = self.background_color;
+        let Some(page) = self.get_page_image_mut(region.page_id) else {
+            return;
+        };
+
+        for y in region.y..region.y.saturating_add(region.height).min(page.height()) {
+            for x in region.x..region.x.saturating_add(region.width).min(page.width()) {
+                page.put_pixel(x, y, background_color);
+            }
+        }
+    }
+}
+
+fn validate_blit(
+    placement: &RuntimePlacement,
+    image: &RgbaImage,
+    page_size: (u32, u32),
+    extrusion: u32,
+) -> Result<UpdateRegion> {
+    let page_id = placement.page_id();
+    let content = placement.content();
+    let source_size = image.dimensions();
+    let expected_content_size = if placement.rotated() {
+        (source_size.1, source_size.0)
+    } else {
+        source_size
+    };
+    if content.is_empty() || (content.w, content.h) != expected_content_size {
+        return Err(blit_invariant(
+            page_id,
+            format!(
+                "content dimensions {:?} do not match source {:?} with rotated={}",
+                (content.w, content.h),
+                source_size,
+                placement.rotated()
+            ),
+        ));
+    }
+
+    let Some(start_x) = content.x.checked_sub(extrusion) else {
+        return Err(blit_invariant(page_id, "extrusion crosses the left edge"));
+    };
+    let Some(start_y) = content.y.checked_sub(extrusion) else {
+        return Err(blit_invariant(page_id, "extrusion crosses the top edge"));
+    };
+    let end_x = u64::from(content.x) + u64::from(content.w) + u64::from(extrusion);
+    let end_y = u64::from(content.y) + u64::from(content.h) + u64::from(extrusion);
+    if end_x > u64::from(page_size.0) || end_y > u64::from(page_size.1) {
+        return Err(blit_invariant(
+            page_id,
+            format!(
+                "destination including extrusion exceeds page dimensions {:?}",
+                page_size
+            ),
+        ));
+    }
+
+    let region = UpdateRegion {
+        page_id,
+        x: start_x,
+        y: start_y,
+        width: u32::try_from(end_x - u64::from(start_x))
+            .map_err(|_| blit_invariant(page_id, "dirty width exceeds u32"))?,
+        height: u32::try_from(end_y - u64::from(start_y))
+            .map_err(|_| blit_invariant(page_id, "dirty height exceeds u32"))?,
+    };
+    let dirty_rect = Rect::new(region.x, region.y, region.width, region.height);
+    if !placement.allocation().contains(&dirty_rect) {
+        return Err(blit_invariant(
+            page_id,
+            "dirty rectangle must lie inside the reserved allocation",
+        ));
+    }
+    Ok(region)
+}
+
+fn blit_staged(
+    image: &RgbaImage,
+    pixels: &mut RgbaImage,
+    content: Rect,
+    rotated: bool,
+    extrusion: u32,
+    outlines: bool,
+) {
+    let (source_width, source_height) = image.dimensions();
+    crate::compositing::blit_rgba(
+        image,
+        pixels,
+        crate::compositing::BlitRect::new(content.x, content.y, content.w, content.h),
+        crate::compositing::BlitRect::new(0, 0, source_width, source_height),
+        crate::compositing::BlitOptions {
+            rotated,
+            extrude: extrusion,
+            outlines,
+        },
+    );
+}
+
+fn blit_invariant(page_id: PageId, reason: impl Into<String>) -> TexPackerError {
+    TexPackerError::InvariantViolation {
+        context: format!("runtime image page {page_id}"),
+        reason: reason.into(),
+    }
+}
+
+fn update_region(page_id: PageId, rect: Rect) -> UpdateRegion {
+    UpdateRegion {
+        page_id,
+        x: rect.x,
+        y: rect.y,
+        width: rect.w,
+        height: rect.h,
     }
 }

@@ -1,4 +1,4 @@
-use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig};
+use crate::config::{GuillotineChoice, GuillotineSplit};
 use crate::free_space::{guillotine_score, guillotine_split, merge_adjacent, prune_contained};
 use crate::model::Rect;
 
@@ -9,11 +9,11 @@ pub(super) struct RuntimeGuillotine {
 }
 
 impl RuntimeGuillotine {
-    pub(super) fn new(usable: Rect, cfg: &PackerConfig) -> Self {
+    pub(super) fn new(usable: Rect, choice: GuillotineChoice, split: GuillotineSplit) -> Self {
         Self {
             free: vec![usable],
-            choice: cfg.g_choice.clone(),
-            split: cfg.g_split.clone(),
+            choice,
+            split,
         }
     }
 

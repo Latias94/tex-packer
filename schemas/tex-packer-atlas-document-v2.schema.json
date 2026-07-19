@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Latias94/tex-packer/main/schemas/tex-packer-atlas-document-v2.schema.json",
+  "title": "tex-packer native atlas document v2",
+  "description": "Structural schema for AtlasDocument v2. Runtime conversion additionally validates identity uniqueness, references, containment, overlap, rotation, and metadata relationships.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "meta", "pages"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "meta": { "$ref": "#/definitions/meta" },
+    "pages": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/page" }
+    }
+  },
+  "definitions": {
+    "u32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "positiveU32": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "$ref": "#/definitions/u32" },
+        "y": { "$ref": "#/definitions/u32" },
+        "w": { "$ref": "#/definitions/positiveU32" },
+        "h": { "$ref": "#/definitions/positiveU32" }
+      }
+    },
+    "size": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/definitions/positiveU32" }
+    },
+    "padding": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/definitions/u32" }
+    },
+    "color": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 255
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "version",
+        "format",
+        "scale",
+        "power_of_two",
+        "square",
+        "max_dimensions",
+        "padding",
+        "extrude",
+        "allow_rotation",
+        "trim_mode",
+        "background_color"
+      ],
+      "properties": {
+        "app": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "format": { "type": "string", "minLength": 1 },
+        "scale": { "type": "number", "exclusiveMinimum": 0 },
+        "power_of_two": { "type": "boolean" },
+        "square": { "type": "boolean" },
+        "max_dimensions": { "$ref": "#/definitions/size" },
+        "padding": { "$ref": "#/definitions/padding" },
+        "extrude": { "$ref": "#/definitions/u32" },
+        "allow_rotation": { "type": "boolean" },
+        "trim_mode": { "type": "string", "minLength": 1 },
+        "background_color": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/definitions/color" }
+          ]
+        }
+      }
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "content", "allocation", "rotated"],
+      "properties": {
+        "id": { "$ref": "#/definitions/u32" },
+        "content": { "$ref": "#/definitions/rect" },
+        "allocation": { "$ref": "#/definitions/rect" },
+        "rotated": { "type": "boolean" }
+      }
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "key", "region_id", "trimmed", "source", "source_size"],
+      "properties": {
+        "id": { "$ref": "#/definitions/u32" },
+        "key": { "type": "string" },
+        "region_id": { "$ref": "#/definitions/u32" },
+        "trimmed": { "type": "boolean" },
+        "source": { "$ref": "#/definitions/rect" },
+        "source_size": { "$ref": "#/definitions/size" }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "width", "height", "regions", "frames"],
+      "properties": {
+        "id": { "$ref": "#/definitions/u32" },
+        "width": { "$ref": "#/definitions/positiveU32" },
+        "height": { "$ref": "#/definitions/positiveU32" },
+        "regions": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/region" }
+        },
+        "frames": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/frame" }
+        }
+      }
+    }
+  }
+}

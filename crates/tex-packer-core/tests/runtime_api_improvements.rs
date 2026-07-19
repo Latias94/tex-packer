@@ -1,24 +1,104 @@
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{
+    GuillotineChoice, GuillotineSplit, PageConfig, RuntimeConfig, RuntimeStrategy, ShelfPolicy,
+};
+use tex_packer_core::error::TexPackerError;
+use tex_packer_core::model::PageId;
+use tex_packer_core::runtime::{AtlasSession, RuntimeStats};
+
+fn runtime_config(width: u32, height: u32, strategy: RuntimeStrategy) -> RuntimeConfig {
+    let page = PageConfig::builder()
+        .max_dimensions(width, height)
+        .build()
+        .expect("valid page config");
+    RuntimeConfig::builder()
+        .page_config(page)
+        .strategy(strategy)
+        .build()
+        .expect("valid runtime config")
+}
+
+fn guillotine_config(width: u32, height: u32) -> RuntimeConfig {
+    runtime_config(
+        width,
+        height,
+        RuntimeStrategy::Guillotine {
+            choice: GuillotineChoice::BestAreaFit,
+            split: GuillotineSplit::SplitShorterLeftoverAxis,
+        },
+    )
+}
+
+#[test]
+fn rejected_oversized_append_does_not_consume_page_id() {
+    let mut sess = AtlasSession::new(guillotine_config(64, 64));
+
+    assert!(sess.append("too_large".into(), 128, 128).is_err());
+    assert_eq!(sess.stats().num_pages, 0);
+    assert_eq!(sess.texture_count(), 0);
+
+    let placement = sess
+        .append("valid".into(), 16, 16)
+        .expect("a valid append should still use the first page");
+    assert_eq!(placement.page_id(), PageId::new(0));
+}
+
+#[test]
+fn rejected_zero_sized_append_does_not_consume_page_id() {
+    let mut sess = AtlasSession::new(guillotine_config(64, 64));
+
+    assert!(sess.append("zero_width".into(), 0, 16).is_err());
+    assert_eq!(sess.stats().num_pages, 0);
+    assert_eq!(sess.texture_count(), 0);
+
+    let placement = sess
+        .append("valid".into(), 16, 16)
+        .expect("a valid append should still use the first page");
+    assert_eq!(placement.page_id(), PageId::new(0));
+}
+
+#[test]
+fn duplicate_key_append_preserves_placement_and_stats() {
+    let mut sess = AtlasSession::new(guillotine_config(64, 64));
+
+    let original = sess
+        .append("duplicate".into(), 16, 16)
+        .expect("initial append");
+    let stats_before = sess.stats();
+
+    let duplicate_result = sess.append("duplicate".into(), 16, 16);
+    assert!(matches!(
+        duplicate_result,
+        Err(TexPackerError::DuplicateKey { ref key }) if key == "duplicate"
+    ));
+    assert_runtime_stats_eq(&sess.stats(), &stats_before);
+
+    let current = sess
+        .get_frame("duplicate")
+        .expect("the original key must remain present");
+    assert_eq!(current.page_id(), original.page_id());
+    assert_eq!(current.content(), original.content());
+    assert_eq!(current.rotated(), original.rotated());
+}
+
+fn assert_runtime_stats_eq(actual: &RuntimeStats, expected: &RuntimeStats) {
+    assert_eq!(actual, expected);
+}
 
 #[test]
 fn test_get_frame() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     // Add some textures
-    let (page_a, frame_a) = sess.append("sprite_a".into(), 64, 64).expect("append A");
-    let (_page_b, _frame_b) = sess.append("sprite_b".into(), 32, 32).expect("append B");
+    let placement_a = sess.append("sprite_a".into(), 64, 64).expect("append A");
+    sess.append("sprite_b".into(), 32, 32).expect("append B");
 
     // Test get_frame
     let result = sess.get_frame("sprite_a");
     assert!(result.is_some());
-    let (found_page, found_frame) = result.unwrap();
-    assert_eq!(found_page, page_a);
-    assert_eq!(found_frame.key, "sprite_a");
-    assert_eq!(found_frame.frame.w, frame_a.frame.w);
-    assert_eq!(found_frame.frame.h, frame_a.frame.h);
+    let found = result.expect("sprite_a placement");
+    assert_eq!(found.page_id(), placement_a.page_id());
+    assert_eq!(found.frame().key(), "sprite_a");
+    assert_eq!(found.content(), placement_a.content());
 
     // Test non-existent key
     assert!(sess.get_frame("non_existent").is_none());
@@ -26,10 +106,7 @@ fn test_get_frame() {
 
 #[test]
 fn test_evict_by_key() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     // Add textures
     sess.append("sprite_a".into(), 64, 64).expect("append A");
@@ -57,10 +134,7 @@ fn test_evict_by_key() {
 
 #[test]
 fn test_contains() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     // Initially empty
     assert!(!sess.contains("sprite_a"));
@@ -83,10 +157,7 @@ fn test_contains() {
 
 #[test]
 fn test_keys() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     // Initially empty
     assert_eq!(sess.keys().len(), 0);
@@ -113,10 +184,7 @@ fn test_keys() {
 
 #[test]
 fn test_texture_count() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     assert_eq!(sess.texture_count(), 0);
 
@@ -139,18 +207,16 @@ fn test_texture_count() {
 
 #[test]
 fn test_runtime_stats() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     // Empty session
     let stats = sess.stats();
     assert_eq!(stats.num_pages, 0);
-    assert_eq!(stats.num_textures, 0);
-    assert_eq!(stats.total_page_area, 0);
-    assert_eq!(stats.total_used_area, 0);
-    assert_eq!(stats.occupancy, 0.0);
+    assert_eq!(stats.num_frames, 0);
+    assert_eq!(stats.num_regions, 0);
+    assert_eq!(stats.page_area, 0);
+    assert_eq!(stats.allocation_area, 0);
+    assert_eq!(stats.allocation_occupancy, 0.0);
 
     // Add some textures
     sess.append("a".into(), 64, 64).expect("append A");
@@ -158,30 +224,28 @@ fn test_runtime_stats() {
 
     let stats = sess.stats();
     assert_eq!(stats.num_pages, 1);
-    assert_eq!(stats.num_textures, 2);
-    assert!(stats.total_page_area > 0);
-    assert!(stats.total_used_area > 0);
-    assert!(stats.occupancy > 0.0);
-    assert!(stats.occupancy <= 1.0);
+    assert_eq!(stats.num_frames, 2);
+    assert_eq!(stats.num_regions, 2);
+    assert!(stats.page_area > 0);
+    assert!(stats.allocation_area > 0);
+    assert!(stats.allocation_occupancy > 0.0);
+    assert!(stats.allocation_occupancy <= 1.0);
 
     // Used area should be at least the sum of texture areas (plus padding)
     let min_used = 64 * 64 + 32 * 32;
-    assert!(stats.total_used_area >= min_used as u64);
+    assert!(stats.allocation_area >= min_used as u128);
 
     // Free area should be positive
-    assert!(stats.total_free_area > 0);
+    assert!(stats.allocator_free_area > 0);
 
     // Total should equal used + free (approximately, due to padding)
-    let total_accounted = stats.total_used_area + stats.total_free_area;
-    assert!(total_accounted <= stats.total_page_area);
+    let total_accounted = stats.allocation_area + stats.allocator_free_area;
+    assert!(total_accounted <= stats.page_area);
 }
 
 #[test]
 fn test_runtime_stats_summary() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     sess.append("a".into(), 64, 64).expect("append");
 
@@ -190,18 +254,15 @@ fn test_runtime_stats_summary() {
 
     // Summary should contain key information
     assert!(summary.contains("Pages:"));
-    assert!(summary.contains("Textures:"));
-    assert!(summary.contains("Occupancy:"));
-    assert!(summary.contains("Free:"));
-    assert!(summary.contains("Used:"));
+    assert!(summary.contains("Frames:"));
+    assert!(summary.contains("Content occupancy:"));
+    assert!(summary.contains("Allocation occupancy:"));
+    assert!(summary.contains("Allocator free:"));
 }
 
 #[test]
 fn test_runtime_stats_fragmentation() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     // Add and remove textures to create fragmentation
     sess.append("a".into(), 64, 64).expect("append A");
@@ -224,10 +285,7 @@ fn test_runtime_stats_fragmentation() {
 
 #[test]
 fn test_runtime_stats_waste_percentage() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     sess.append("a".into(), 32, 32).expect("append");
 
@@ -244,13 +302,13 @@ fn test_runtime_stats_waste_percentage() {
 
 #[test]
 fn test_evict_by_key_with_reuse() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(256, 256));
 
     // Add texture
-    let (page_a, _) = sess.append("sprite_a".into(), 64, 64).expect("append A");
+    let page_a = sess
+        .append("sprite_a".into(), 64, 64)
+        .expect("append A")
+        .page_id();
     assert_eq!(sess.texture_count(), 1);
 
     // Evict it
@@ -258,7 +316,10 @@ fn test_evict_by_key_with_reuse() {
     assert_eq!(sess.texture_count(), 0);
 
     // Add new texture with same size - should reuse space
-    let (page_b, _) = sess.append("sprite_b".into(), 64, 64).expect("append B");
+    let page_b = sess
+        .append("sprite_b".into(), 64, 64)
+        .expect("append B")
+        .page_id();
     assert_eq!(sess.texture_count(), 1);
 
     // Should be on the same page
@@ -267,10 +328,14 @@ fn test_evict_by_key_with_reuse() {
 
 #[test]
 fn test_shelf_strategy_with_new_api() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Shelf(ShelfPolicy::FirstFit));
+    let cfg = runtime_config(
+        256,
+        256,
+        RuntimeStrategy::Shelf {
+            policy: ShelfPolicy::FirstFit,
+        },
+    );
+    let mut sess = AtlasSession::new(cfg);
 
     // Add textures
     sess.append("a".into(), 64, 32).expect("append A");
@@ -285,8 +350,8 @@ fn test_shelf_strategy_with_new_api() {
     assert_eq!(keys.len(), 2);
 
     // Get frame
-    let (_page_id, frame) = sess.get_frame("a").expect("frame should exist");
-    assert_eq!(frame.key, "a");
+    let placement = sess.get_frame("a").expect("frame should exist");
+    assert_eq!(placement.frame().key(), "a");
 
     // Evict by key
     assert!(sess.evict_by_key("a"));
@@ -294,15 +359,12 @@ fn test_shelf_strategy_with_new_api() {
 
     // Stats
     let stats = sess.stats();
-    assert_eq!(stats.num_textures, 1);
+    assert_eq!(stats.num_frames, 1);
 }
 
 #[test]
 fn test_multiple_pages_stats() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(128, 128)
-        .build();
-    let mut sess = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut sess = AtlasSession::new(guillotine_config(128, 128));
 
     // Add many textures to force multiple pages
     for i in 0..10 {
@@ -312,9 +374,9 @@ fn test_multiple_pages_stats() {
 
     let stats = sess.stats();
     assert!(stats.num_pages > 1, "Should have multiple pages");
-    assert_eq!(stats.num_textures, 10);
+    assert_eq!(stats.num_frames, 10);
 
     // Total page area should be num_pages * page_size
-    let expected_total = (128 * 128) as u64 * stats.num_pages as u64;
-    assert_eq!(stats.total_page_area, expected_total);
+    let expected_total = (128 * 128) as u128 * stats.num_pages as u128;
+    assert_eq!(stats.page_area, expected_total);
 }

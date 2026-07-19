@@ -1,21 +1,138 @@
 use image::{DynamicImage, Rgba, RgbaImage};
 use std::collections::HashMap;
-use tex_packer_core::TexPackerError;
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{OfflineConfig, PageConfig, SortOrder};
+use tex_packer_core::error::TexPackerError;
+use tex_packer_core::model::{Atlas, PageId, Rect, RegionId};
+use tex_packer_core::offline::{InputImage, LayoutItem, OfflinePacker, PackOutput};
+
+fn pack_images(
+    inputs: Vec<InputImage>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<PackOutput> {
+    OfflinePacker::new(config).pack_images(inputs)
+}
+
+fn pack_layout<K: Into<String>>(
+    inputs: Vec<(K, u32, u32)>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<Atlas> {
+    OfflinePacker::new(config).pack_layout(
+        inputs
+            .into_iter()
+            .map(|(key, w, h)| LayoutItem {
+                key: key.into(),
+                w,
+                h,
+                source: None,
+                source_size: None,
+                trimmed: false,
+            })
+            .collect(),
+    )
+}
+
+fn pack_layout_items(
+    items: Vec<LayoutItem>,
+    config: OfflineConfig,
+) -> tex_packer_core::error::Result<Atlas> {
+    OfflinePacker::new(config).pack_layout(items)
+}
+
+#[test]
+fn decoded_render_and_layout_share_the_same_atlas() {
+    let page = PageConfig::builder()
+        .max_dimensions(64, 64)
+        .allow_rotation(true)
+        .texture_padding(2)
+        .texture_extrusion(1)
+        .build()
+        .expect("valid page config");
+    let config = OfflineConfig::builder()
+        .page_config(page)
+        .trim(true)
+        .trim_threshold(0)
+        .sort_order(SortOrder::None)
+        .build()
+        .expect("valid offline config");
+    let packer = OfflinePacker::new(config);
+
+    let inputs = || {
+        vec![
+            InputImage {
+                key: "original".into(),
+                image: DynamicImage::ImageRgba8(image_with_opaque_rect(
+                    12,
+                    10,
+                    Rect::new(2, 3, 4, 5),
+                )),
+            },
+            InputImage {
+                key: "alias".into(),
+                image: DynamicImage::ImageRgba8(image_with_opaque_rect(
+                    16,
+                    14,
+                    Rect::new(7, 4, 4, 5),
+                )),
+            },
+        ]
+    };
+
+    let rendered = packer.pack_images(inputs()).expect("rendered pack");
+    let layout = packer.layout_images(inputs()).expect("metadata-only pack");
+
+    assert_eq!(rendered.atlas(), &layout);
+    assert_eq!(rendered.atlas().stats().num_frames, 2);
+    assert_eq!(rendered.atlas().stats().num_regions, 1);
+    assert_output_pages_match_atlas(&rendered);
+}
+
+#[test]
+fn pure_layout_keeps_equal_sizes_as_distinct_regions() {
+    let packer = OfflinePacker::new(OfflineConfig::default());
+    let atlas = packer
+        .pack_layout(vec![
+            LayoutItem {
+                key: "first".into(),
+                w: 8,
+                h: 8,
+                source: None,
+                source_size: None,
+                trimmed: false,
+            },
+            LayoutItem {
+                key: "second".into(),
+                w: 8,
+                h: 8,
+                source: None,
+                source_size: None,
+                trimmed: false,
+            },
+        ])
+        .expect("pure layout pack");
+
+    assert_eq!(atlas.stats().num_frames, 2);
+    assert_eq!(atlas.stats().num_regions, 2);
+    assert_eq!(atlas.stats().num_aliases, 0);
+}
 
 #[test]
 fn layout_and_images_have_same_geometry() {
     // Trimming off to avoid data-dependent changes
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 256)
-        .trim(false)
+    let page = PageConfig::builder()
+        .max_dimensions(256, 256)
         .allow_rotation(true)
-        .build();
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(false)
+        .build()
+        .expect("valid offline config");
 
     // Build small set with varied sizes
     let sizes = vec![("a", 40, 20), ("b", 16, 32), ("c", 10, 10), ("d", 8, 48)];
     // layout-only
-    let atlas_layout = tex_packer_core::pack_layout(
+    let atlas_layout = pack_layout(
         sizes.iter().map(|(k, w, h)| (*k, *w, *h)).collect(),
         cfg.clone(),
     )
@@ -30,26 +147,30 @@ fn layout_and_images_have_same_geometry() {
             image: img,
         });
     }
-    let out = tex_packer_core::pack_images(inputs, cfg).expect("images");
+    let out = pack_images(inputs, cfg).expect("images");
 
     assert_output_pages_match_atlas(&out);
-    assert_atlas_geometry_matches(&atlas_layout, &out.atlas);
+    assert_atlas_geometry_matches(&atlas_layout, out.atlas());
 }
 
 #[test]
 fn layout_and_images_match_for_forced_rotation() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(16, 12)
-        .trim(false)
+    let page = PageConfig::builder()
+        .max_dimensions(16, 12)
         .allow_rotation(true)
         .texture_padding(0)
         .texture_extrusion(0)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(false)
         .sort_order(SortOrder::None)
-        .build();
+        .build()
+        .expect("valid offline config");
 
-    let atlas_layout =
-        tex_packer_core::pack_layout(vec![("rotated", 8, 14)], cfg.clone()).expect("layout");
-    let out = tex_packer_core::pack_images(
+    let atlas_layout = pack_layout(vec![("rotated", 8, 14)], cfg.clone()).expect("layout");
+    let out = pack_images(
         vec![InputImage {
             key: "rotated".to_string(),
             image: DynamicImage::ImageRgba8(RgbaImage::new(8, 14)),
@@ -59,27 +180,35 @@ fn layout_and_images_match_for_forced_rotation() {
     .expect("images");
 
     assert_output_pages_match_atlas(&out);
-    assert_atlas_geometry_matches(&atlas_layout, &out.atlas);
+    assert_atlas_geometry_matches(&atlas_layout, out.atlas());
 
-    let frame = &out.atlas.pages[0].frames[0];
-    assert!(frame.rotated);
-    assert_eq!(frame.frame.w, 14);
-    assert_eq!(frame.frame.h, 8);
+    let resolved = out.atlas().pages()[0]
+        .resolved_frames()
+        .next()
+        .expect("rotated frame");
+    assert!(resolved.region().rotated());
+    assert_eq!(resolved.region().content().w, 14);
+    assert_eq!(resolved.region().content().h, 8);
 }
 
 #[test]
 fn layout_items_and_trimmed_images_match_with_padding_extrude_and_page_sizing() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(256, 128)
-        .trim(true)
-        .trim_threshold(0)
+    let page = PageConfig::builder()
+        .max_dimensions(256, 128)
         .allow_rotation(true)
         .texture_padding(4)
         .texture_extrusion(2)
         .border_padding(3)
-        .pow2(true)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(true)
+        .trim_threshold(0)
+        .power_of_two(true)
         .square(true)
-        .build();
+        .build()
+        .expect("valid offline config");
     let specs = [
         ("a", 40, 30, Rect::new(5, 4, 12, 18)),
         ("b", 38, 34, Rect::new(10, 8, 20, 10)),
@@ -96,7 +225,7 @@ fn layout_items_and_trimmed_images_match_with_padding_extrude_and_page_sizing() 
     let layout_items = specs
         .iter()
         .map(|(key, source_w, source_h, opaque)| LayoutItem {
-            key: *key,
+            key: (*key).to_string(),
             w: opaque.w,
             h: opaque.h,
             source: Some(*opaque),
@@ -105,39 +234,44 @@ fn layout_items_and_trimmed_images_match_with_padding_extrude_and_page_sizing() 
         })
         .collect();
 
-    let atlas_layout = tex_packer_core::pack_layout_items(layout_items, cfg.clone())
-        .expect("layout items should pack");
-    let out = tex_packer_core::pack_images(image_inputs, cfg).expect("images should pack");
+    let atlas_layout =
+        pack_layout_items(layout_items, cfg.clone()).expect("layout items should pack");
+    let out = pack_images(image_inputs, cfg).expect("images should pack");
 
     assert_output_pages_match_atlas(&out);
-    assert_atlas_geometry_matches(&atlas_layout, &out.atlas);
-    for page in &out.atlas.pages {
-        assert_eq!(page.width, page.height);
-        assert!(is_pow2(page.width));
-        for frame in &page.frames {
-            assert!(frame.trimmed);
+    assert_atlas_geometry_matches(&atlas_layout, out.atlas());
+    for page in out.atlas().pages() {
+        assert_eq!(page.width(), page.height());
+        assert!(is_pow2(page.width()));
+        for frame in page.frames() {
+            assert!(frame.trimmed());
         }
     }
 }
 
 #[test]
 fn layout_and_images_match_when_packing_spills_to_multiple_pages() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(64, 64)
-        .trim(false)
+    let page = PageConfig::builder()
+        .max_dimensions(64, 64)
         .allow_rotation(false)
         .texture_padding(0)
         .texture_extrusion(0)
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(false)
         .sort_order(SortOrder::None)
-        .build();
+        .build()
+        .expect("valid offline config");
     let sizes = [("a", 40, 40), ("b", 40, 40), ("c", 40, 40)];
 
-    let atlas_layout = tex_packer_core::pack_layout(
+    let atlas_layout = pack_layout(
         sizes.iter().map(|(key, w, h)| (*key, *w, *h)).collect(),
         cfg.clone(),
     )
     .expect("layout should pack");
-    let out = tex_packer_core::pack_images(
+    let out = pack_images(
         sizes
             .iter()
             .enumerate()
@@ -154,82 +288,99 @@ fn layout_and_images_match_when_packing_spills_to_multiple_pages() {
     )
     .expect("images should pack");
 
-    assert!(out.atlas.pages.len() > 1);
+    assert!(out.atlas().pages().len() > 1);
     assert_output_pages_match_atlas(&out);
-    assert_atlas_geometry_matches(&atlas_layout, &out.atlas);
+    assert_atlas_geometry_matches(&atlas_layout, out.atlas());
 }
 
 #[test]
 fn layout_and_images_report_same_out_of_space_progress() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(32, 32)
-        .trim(false)
+    let page = PageConfig::builder()
+        .max_dimensions(32, 32)
         .texture_padding(0)
         .texture_extrusion(0)
-        .build();
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .trim(false)
+        .build()
+        .expect("valid offline config");
 
-    let layout_err =
-        tex_packer_core::pack_layout(vec![("too_big", 64, 64)], cfg.clone()).unwrap_err();
-    let image_err = match tex_packer_core::pack_images(
+    let pure_layout_err = pack_layout(vec![("too_big", 64, 64)], cfg.clone()).unwrap_err();
+    let packer = OfflinePacker::new(cfg);
+    let image_input = || {
         vec![InputImage {
             key: "too_big".to_string(),
             image: DynamicImage::ImageRgba8(RgbaImage::new(64, 64)),
-        }],
-        cfg,
-    ) {
+        }]
+    };
+    let image_err = match packer.pack_images(image_input()) {
         Ok(_) => panic!("image packing should fail"),
         Err(err) => err,
     };
+    let image_layout_err = packer
+        .layout_images(image_input())
+        .expect_err("decoded-image layout should fail");
 
-    assert_eq!(
-        out_of_space_progress(layout_err),
-        out_of_space_progress(image_err)
-    );
+    let pure_layout_progress = out_of_space_progress(pure_layout_err);
+    let render_progress = out_of_space_progress(image_err);
+    let decoded_layout_progress = out_of_space_progress(image_layout_err);
+    assert_eq!(pure_layout_progress, render_progress);
+    assert_eq!(render_progress, decoded_layout_progress);
 }
 
 #[derive(Debug, PartialEq, Eq)]
 struct FrameRecord {
-    page_id: usize,
+    page_id: PageId,
     page_size: (u32, u32),
-    frame: Rect,
+    region_id: RegionId,
+    content: Rect,
+    allocation: Rect,
     rotated: bool,
     trimmed: bool,
     source: Rect,
     source_size: (u32, u32),
 }
 
-fn assert_atlas_geometry_matches(expected: &Atlas<String>, actual: &Atlas<String>) {
-    assert_eq!(expected.pages.len(), actual.pages.len());
+fn assert_atlas_geometry_matches(expected: &Atlas, actual: &Atlas) {
+    assert_eq!(expected.pages().len(), actual.pages().len());
     assert_eq!(frame_records(expected), frame_records(actual));
 }
 
 fn assert_output_pages_match_atlas(out: &PackOutput) {
-    assert_eq!(out.pages.len(), out.atlas.pages.len());
-    for (rendered, atlas_page) in out.pages.iter().zip(out.atlas.pages.iter()) {
-        assert_eq!(rendered.page.id, atlas_page.id);
-        assert_eq!(rendered.page.width, atlas_page.width);
-        assert_eq!(rendered.page.height, atlas_page.height);
+    assert_eq!(out.pages().len(), out.atlas().pages().len());
+    for (rendered, atlas_page) in out.pages().iter().zip(out.atlas().pages().iter()) {
+        assert_eq!(rendered.page_id(), atlas_page.id());
         assert_eq!(
-            rendered.rgba.dimensions(),
-            (atlas_page.width, atlas_page.height)
+            out.atlas().page(rendered.page_id()).map(|page| page.size()),
+            Some(atlas_page.size())
+        );
+        assert_eq!(
+            rendered.rgba().dimensions(),
+            (atlas_page.width(), atlas_page.height())
         );
     }
 }
 
-fn frame_records(atlas: &Atlas<String>) -> HashMap<String, FrameRecord> {
+fn frame_records(atlas: &Atlas) -> HashMap<String, FrameRecord> {
     let mut records = HashMap::new();
-    for page in &atlas.pages {
-        for frame in &page.frames {
+    for page in atlas.pages() {
+        for resolved in page.resolved_frames() {
+            let frame = resolved.frame();
+            let region = resolved.region();
             records.insert(
-                frame.key.clone(),
+                frame.key().to_string(),
                 FrameRecord {
-                    page_id: page.id,
-                    page_size: (page.width, page.height),
-                    frame: frame.frame,
-                    rotated: frame.rotated,
-                    trimmed: frame.trimmed,
-                    source: frame.source,
-                    source_size: frame.source_size,
+                    page_id: page.id(),
+                    page_size: page.size(),
+                    region_id: region.id(),
+                    content: region.content(),
+                    allocation: region.allocation(),
+                    rotated: region.rotated(),
+                    trimmed: frame.trimmed(),
+                    source: frame.source(),
+                    source_size: frame.source_size(),
                 },
             );
         }

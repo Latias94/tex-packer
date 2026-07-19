@@ -1,24 +1,25 @@
-use super::Packer;
-use crate::config::{GuillotineChoice, GuillotineSplit, PackerConfig};
+use crate::config::{GuillotineChoice, GuillotineSplit, PageConfig};
 use crate::free_space::{guillotine_score, guillotine_split, merge_adjacent, prune_contained};
-use crate::geometry::{PackingContext, PlacementGeometry};
-use crate::model::{Frame, Rect};
+use crate::geometry::{ContentSize, PhysicalPlacement, PlacementGeometry, usable_area};
+use crate::model::Rect;
 
-pub struct GuillotinePacker {
-    config: PackerConfig,
+pub(super) struct GuillotinePacker {
+    page_config: PageConfig,
     free: Vec<Rect>,
-    used: Vec<Rect>,
     choice: GuillotineChoice,
     split: GuillotineSplit,
 }
 
 impl GuillotinePacker {
-    pub fn new(config: PackerConfig, choice: GuillotineChoice, split: GuillotineSplit) -> Self {
-        let border = PackingContext::new(&config).usable_area();
+    pub(super) fn new(
+        page_config: PageConfig,
+        choice: GuillotineChoice,
+        split: GuillotineSplit,
+    ) -> Self {
+        let border = usable_area(&page_config);
         Self {
-            config,
+            page_config,
             free: vec![border],
-            used: Vec::new(),
             choice,
             split,
         }
@@ -39,7 +40,7 @@ impl GuillotinePacker {
                     best_rot = false;
                 }
             }
-            if self.config.allow_rotation && fr.w >= h && fr.h >= w {
+            if self.page_config.allow_rotation() && fr.w >= h && fr.h >= w {
                 let s = guillotine_score(&self.choice, fr, h, w).0;
                 if s < best_score {
                     best_score = s;
@@ -64,7 +65,6 @@ impl GuillotinePacker {
         }
         self.prune_free_list();
         self.merge_free_list();
-        self.used.push(*placed);
     }
 
     fn prune_free_list(&mut self) {
@@ -74,22 +74,69 @@ impl GuillotinePacker {
     fn merge_free_list(&mut self) {
         merge_adjacent(&mut self.free);
     }
+
+    pub(super) fn try_place(&mut self, content: ContentSize) -> Option<PhysicalPlacement> {
+        let geometry = PlacementGeometry::new(content, &self.page_config)?;
+        let (reserved_w, reserved_h) = geometry.reserved_size();
+        let (index, allocation, rotated) = self.choose(reserved_w, reserved_h)?;
+        self.place(index, &allocation);
+        Some(geometry.complete(allocation, rotated))
+    }
 }
 
-impl<K: Clone> Packer<K> for GuillotinePacker {
-    fn can_pack(&self, rect: &Rect) -> bool {
-        let geometry = PlacementGeometry::new(rect, &self.config);
-        self.choose(geometry.reserved_w, geometry.reserved_h)
-            .is_some()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geometry::rect_area_u128;
+
+    fn page_config(width: u32, height: u32) -> PageConfig {
+        PageConfig::builder()
+            .max_dimensions(width, height)
+            .allow_rotation(true)
+            .texture_padding(0)
+            .texture_extrusion(0)
+            .build()
+            .expect("valid test page")
     }
 
-    fn pack(&mut self, key: K, rect: &Rect) -> Option<Frame<K>> {
-        let geometry = PlacementGeometry::new(rect, &self.config);
-        if let Some((idx, place, rotated)) = self.choose(geometry.reserved_w, geometry.reserved_h) {
-            self.place(idx, &place);
-            Some(geometry.frame(key, *rect, &place, rotated))
-        } else {
-            None
-        }
+    fn engine(width: u32, height: u32) -> GuillotinePacker {
+        GuillotinePacker::new(
+            page_config(width, height),
+            GuillotineChoice::BestAreaFit,
+            GuillotineSplit::SplitShorterLeftoverAxis,
+        )
+    }
+
+    #[test]
+    fn rotates_when_only_rotated_allocation_fits() {
+        let mut engine = engine(16, 12);
+        let placement = engine
+            .try_place(ContentSize::new(8, 14))
+            .expect("rotated allocation should fit");
+        assert!(placement.rotated);
+        assert_eq!((placement.content.w, placement.content.h), (14, 8));
+        assert_eq!((placement.allocation.w, placement.allocation.h), (14, 8));
+    }
+
+    #[test]
+    fn failed_search_does_not_change_free_state() {
+        let mut engine = engine(16, 12);
+        let before = engine.free.clone();
+        assert!(engine.try_place(ContentSize::new(17, 13)).is_none());
+        assert_eq!(engine.free, before);
+    }
+
+    #[test]
+    fn successful_search_consumes_allocation_once() {
+        let mut engine = engine(32, 32);
+        let free_area_before = engine.free.iter().map(rect_area_u128).sum::<u128>();
+        let placement = engine
+            .try_place(ContentSize::new(7, 5))
+            .expect("allocation should fit");
+        let free_area_after = engine.free.iter().map(rect_area_u128).sum::<u128>();
+        assert_eq!(
+            free_area_before - free_area_after,
+            rect_area_u128(&placement.allocation)
+        );
     }
 }

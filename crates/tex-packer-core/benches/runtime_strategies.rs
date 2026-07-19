@@ -1,14 +1,52 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
-use tex_packer_core::prelude::*;
+use std::time::{Duration, Instant};
+use tex_packer_core::config::{
+    GuillotineChoice, GuillotineSplit, PageConfig, RuntimeConfig, RuntimeStrategy, ShelfPolicy,
+    SkylineHeuristic,
+};
+use tex_packer_core::runtime::AtlasSession;
+
+fn runtime_config(
+    width: u32,
+    height: u32,
+    allow_rotation: bool,
+    strategy: RuntimeStrategy,
+) -> RuntimeConfig {
+    let page = PageConfig::builder()
+        .max_dimensions(width, height)
+        .allow_rotation(allow_rotation)
+        .build()
+        .expect("valid benchmark page config");
+    RuntimeConfig::builder()
+        .page_config(page)
+        .strategy(strategy)
+        .build()
+        .expect("valid benchmark runtime config")
+}
+
+fn guillotine_strategy() -> RuntimeStrategy {
+    RuntimeStrategy::Guillotine {
+        choice: GuillotineChoice::BestAreaFit,
+        split: GuillotineSplit::SplitShorterLeftoverAxis,
+    }
+}
+
+fn shelf_strategy(policy: ShelfPolicy) -> RuntimeStrategy {
+    RuntimeStrategy::Shelf { policy }
+}
+
+fn skyline_strategy(heuristic: SkylineHeuristic) -> RuntimeStrategy {
+    RuntimeStrategy::Skyline { heuristic }
+}
 
 fn generate_textures(count: usize, min_size: u32, max_size: u32) -> Vec<(String, u32, u32)> {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
+    use rand::RngExt;
+    let mut rng = rand::rng();
     (0..count)
         .map(|i| {
-            let w = rng.gen_range(min_size..=max_size);
-            let h = rng.gen_range(min_size..=max_size);
+            let w = rng.random_range(min_size..=max_size);
+            let h = rng.random_range(min_size..=max_size);
             (format!("tex_{}", i), w, h)
         })
         .collect()
@@ -30,10 +68,8 @@ fn bench_runtime_strategy(c: &mut Criterion) {
             &textures,
             |b, textures| {
                 b.iter(|| {
-                    let cfg = PackerConfig::builder()
-                        .with_max_dimensions(2048, 2048)
-                        .build();
-                    let mut session = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+                    let cfg = runtime_config(2048, 2048, true, guillotine_strategy());
+                    let mut session = AtlasSession::new(cfg);
                     for (key, w, h) in textures {
                         let _ = session.append(key.clone(), *w, *h);
                     }
@@ -48,11 +84,9 @@ fn bench_runtime_strategy(c: &mut Criterion) {
             &textures,
             |b, textures| {
                 b.iter(|| {
-                    let cfg = PackerConfig::builder()
-                        .with_max_dimensions(2048, 2048)
-                        .build();
-                    let mut session =
-                        AtlasSession::new(cfg, RuntimeStrategy::Shelf(ShelfPolicy::NextFit));
+                    let cfg =
+                        runtime_config(2048, 2048, true, shelf_strategy(ShelfPolicy::NextFit));
+                    let mut session = AtlasSession::new(cfg);
                     for (key, w, h) in textures {
                         let _ = session.append(key.clone(), *w, *h);
                     }
@@ -67,11 +101,9 @@ fn bench_runtime_strategy(c: &mut Criterion) {
             &textures,
             |b, textures| {
                 b.iter(|| {
-                    let cfg = PackerConfig::builder()
-                        .with_max_dimensions(2048, 2048)
-                        .build();
-                    let mut session =
-                        AtlasSession::new(cfg, RuntimeStrategy::Shelf(ShelfPolicy::FirstFit));
+                    let cfg =
+                        runtime_config(2048, 2048, true, shelf_strategy(ShelfPolicy::FirstFit));
+                    let mut session = AtlasSession::new(cfg);
                     for (key, w, h) in textures {
                         let _ = session.append(key.clone(), *w, *h);
                     }
@@ -86,13 +118,13 @@ fn bench_runtime_strategy(c: &mut Criterion) {
             &textures,
             |b, textures| {
                 b.iter(|| {
-                    let cfg = PackerConfig::builder()
-                        .with_max_dimensions(2048, 2048)
-                        .build();
-                    let mut session = AtlasSession::new(
-                        cfg,
-                        RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft),
+                    let cfg = runtime_config(
+                        2048,
+                        2048,
+                        true,
+                        skyline_strategy(SkylineHeuristic::BottomLeft),
                     );
+                    let mut session = AtlasSession::new(cfg);
                     for (key, w, h) in textures {
                         let _ = session.append(key.clone(), *w, *h);
                     }
@@ -107,13 +139,13 @@ fn bench_runtime_strategy(c: &mut Criterion) {
             &textures,
             |b, textures| {
                 b.iter(|| {
-                    let cfg = PackerConfig::builder()
-                        .with_max_dimensions(2048, 2048)
-                        .build();
-                    let mut session = AtlasSession::new(
-                        cfg,
-                        RuntimeStrategy::Skyline(SkylineHeuristic::MinWaste),
+                    let cfg = runtime_config(
+                        2048,
+                        2048,
+                        true,
+                        skyline_strategy(SkylineHeuristic::MinWaste),
                     );
+                    let mut session = AtlasSession::new(cfg);
                     for (key, w, h) in textures {
                         let _ = session.append(key.clone(), *w, *h);
                     }
@@ -129,32 +161,33 @@ fn bench_runtime_strategy(c: &mut Criterion) {
 fn bench_append_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("append_operations");
 
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(2048, 2048)
-        .build();
+    let guillotine_cfg = runtime_config(2048, 2048, true, guillotine_strategy());
+    let shelf_cfg = runtime_config(2048, 2048, true, shelf_strategy(ShelfPolicy::NextFit));
+    let skyline_cfg = runtime_config(
+        2048,
+        2048,
+        true,
+        skyline_strategy(SkylineHeuristic::BottomLeft),
+    );
 
     // Benchmark single append for each strategy
     group.bench_function("Guillotine_single_append", |b| {
         b.iter(|| {
-            let mut session = AtlasSession::new(cfg.clone(), RuntimeStrategy::Guillotine);
+            let mut session = AtlasSession::new(guillotine_cfg.clone());
             black_box(session.append("test".into(), 64, 64))
         });
     });
 
     group.bench_function("Shelf_single_append", |b| {
         b.iter(|| {
-            let mut session =
-                AtlasSession::new(cfg.clone(), RuntimeStrategy::Shelf(ShelfPolicy::NextFit));
+            let mut session = AtlasSession::new(shelf_cfg.clone());
             black_box(session.append("test".into(), 64, 64))
         });
     });
 
     group.bench_function("Skyline_single_append", |b| {
         b.iter(|| {
-            let mut session = AtlasSession::new(
-                cfg.clone(),
-                RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft),
-            );
+            let mut session = AtlasSession::new(skyline_cfg.clone());
             black_box(session.append("test".into(), 64, 64))
         });
     });
@@ -162,15 +195,47 @@ fn bench_append_operations(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_append_after_growth(c: &mut Criterion) {
+    let mut group = c.benchmark_group("append_after_growth");
+
+    for existing_count in [1_000, 10_000] {
+        let cfg = runtime_config(2048, 2048, false, guillotine_strategy());
+        let mut session = AtlasSession::new(cfg);
+        for index in 0..existing_count {
+            session
+                .append(format!("existing_{index}"), 8, 8)
+                .expect("benchmark fixture should fit on one page");
+        }
+        assert_eq!(session.stats().num_pages, 1);
+
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(BenchmarkId::new("Guillotine", existing_count), |b| {
+            b.iter_custom(|iterations| {
+                let mut measured = Duration::ZERO;
+                for _ in 0..iterations {
+                    let started = Instant::now();
+                    let placement = session
+                        .append("append_probe".to_owned(), 8, 8)
+                        .expect("benchmark probe should fit on the existing page");
+                    measured += started.elapsed();
+                    black_box(placement);
+                    assert!(session.evict_by_key("append_probe"));
+                }
+                measured
+            });
+        });
+    }
+
+    group.finish();
+}
+
 fn bench_query_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("query_operations");
 
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(2048, 2048)
-        .build();
+    let cfg = runtime_config(2048, 2048, true, guillotine_strategy());
 
     // Setup: Create session with 100 textures
-    let mut session = AtlasSession::new(cfg, RuntimeStrategy::Guillotine);
+    let mut session = AtlasSession::new(cfg);
     for i in 0..100 {
         let _ = session.append(format!("tex_{}", i), 32, 32);
     }
@@ -201,14 +266,12 @@ fn bench_query_operations(c: &mut Criterion) {
 fn bench_evict_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("evict_operations");
 
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(2048, 2048)
-        .build();
+    let cfg = runtime_config(2048, 2048, true, guillotine_strategy());
 
     group.bench_function("evict_by_key", |b| {
         b.iter_batched(
             || {
-                let mut session = AtlasSession::new(cfg.clone(), RuntimeStrategy::Guillotine);
+                let mut session = AtlasSession::new(cfg.clone());
                 for i in 0..50 {
                     let _ = session.append(format!("tex_{}", i), 32, 32);
                 }
@@ -239,26 +302,21 @@ fn bench_space_efficiency(c: &mut Criterion) {
                 textures,
                 |b, textures| {
                     b.iter(|| {
-                        let cfg = PackerConfig::builder()
-                            .with_max_dimensions(1024, 1024)
-                            .build();
-
                         let strategy = match strategy_name {
-                            "Guillotine" => RuntimeStrategy::Guillotine,
-                            "Shelf_NextFit" => RuntimeStrategy::Shelf(ShelfPolicy::NextFit),
-                            "Skyline_BottomLeft" => {
-                                RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft)
-                            }
+                            "Guillotine" => guillotine_strategy(),
+                            "Shelf_NextFit" => shelf_strategy(ShelfPolicy::NextFit),
+                            "Skyline_BottomLeft" => skyline_strategy(SkylineHeuristic::BottomLeft),
                             _ => unreachable!(),
                         };
 
-                        let mut session = AtlasSession::new(cfg, strategy);
+                        let cfg = runtime_config(1024, 1024, true, strategy);
+                        let mut session = AtlasSession::new(cfg);
                         for (key, w, h) in textures {
                             let _ = session.append(key.clone(), *w, *h);
                         }
 
                         let stats = session.stats();
-                        black_box(stats.occupancy)
+                        black_box(stats.allocation_occupancy)
                     });
                 },
             );
@@ -285,15 +343,13 @@ fn bench_with_rotation(c: &mut Criterion) {
             &textures,
             |b, textures| {
                 b.iter(|| {
-                    let cfg = PackerConfig::builder()
-                        .with_max_dimensions(2048, 2048)
-                        .allow_rotation(allow_rotation)
-                        .build();
-
-                    let mut session = AtlasSession::new(
-                        cfg,
-                        RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft),
+                    let cfg = runtime_config(
+                        2048,
+                        2048,
+                        allow_rotation,
+                        skyline_strategy(SkylineHeuristic::BottomLeft),
                     );
+                    let mut session = AtlasSession::new(cfg);
                     for (key, w, h) in textures {
                         let _ = session.append(key.clone(), *w, *h);
                     }
@@ -310,6 +366,7 @@ criterion_group!(
     benches,
     bench_runtime_strategy,
     bench_append_operations,
+    bench_append_after_growth,
     bench_query_operations,
     bench_evict_operations,
     bench_space_efficiency,

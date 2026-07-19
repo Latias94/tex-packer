@@ -1,8 +1,8 @@
 #![allow(unused_parens, unused_mut, non_snake_case, clippy::too_many_arguments)]
 
 use image::{Rgba, RgbaImage};
-use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng};
+use rand::seq::IndexedRandom;
+use rand::{Rng, RngExt, SeedableRng};
 use std::fs;
 use std::path::PathBuf;
 
@@ -21,7 +21,7 @@ fn solid(w: u32, h: u32, c: [u8; 4]) -> RgbaImage {
 }
 
 fn random_color_opaque(rng: &mut impl Rng) -> [u8; 4] {
-    [rng.r#gen(), rng.r#gen(), rng.r#gen(), 255]
+    [rng.random(), rng.random(), rng.random(), 255]
 }
 
 fn draw_rect(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, c: [u8; 4]) {
@@ -234,8 +234,8 @@ fn draw_border_rect(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, color: 
 fn gen_basic_sizes(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
     ensure_dir(out)?;
     for i in 0..120u32 {
-        let w = rng.gen_range(16..=164);
-        let h = rng.gen_range(16..=164);
+        let w = rng.random_range(16..=164);
+        let h = rng.random_range(16..=164);
         let mut img = solid(w, h, [0, 0, 0, 0]);
         draw_rect(&mut img, 0, 0, w, h, random_color_opaque(rng));
         draw_border_full(&mut img, [0, 0, 0, 255]);
@@ -253,11 +253,11 @@ fn gen_basic_sizes(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
 fn gen_thin_bars(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
     ensure_dir(out)?;
     for i in 0..80u32 {
-        let horiz = rng.gen_bool(0.5);
+        let horiz = rng.random_bool(0.5);
         let (w, h) = if horiz {
-            (rng.gen_range(64..=256), rng.gen_range(4..=12))
+            (rng.random_range(64..=256), rng.random_range(4..=12))
         } else {
-            (rng.gen_range(4..=12), rng.gen_range(64..=256))
+            (rng.random_range(4..=12), rng.random_range(64..=256))
         };
         let mut img = solid(w, h, [0, 0, 0, 0]);
         draw_rect(&mut img, 0, 0, w, h, random_color_opaque(rng));
@@ -276,23 +276,23 @@ fn gen_thin_bars(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
 fn gen_trim_cases(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
     ensure_dir(out)?;
     for i in 0..80u32 {
-        let w = rng.gen_range(48..=192);
-        let h = rng.gen_range(48..=192);
+        let w = rng.random_range(48..=192);
+        let h = rng.random_range(48..=192);
         let mut img = solid(w, h, [0, 0, 0, 0]);
-        let bw = rng.gen_range(16..=(w / 2).max(16));
-        let bh = rng.gen_range(16..=(h / 2).max(16));
-        let offx = rng.gen_range(0..(w - bw + 1));
-        let offy = rng.gen_range(0..(h - bh + 1));
+        let bw = rng.random_range(16..=(w / 2).max(16));
+        let bh = rng.random_range(16..=(h / 2).max(16));
+        let offx = rng.random_range(0..(w - bw + 1));
+        let offy = rng.random_range(0..(h - bh + 1));
         draw_rect(&mut img, offx, offy, bw, bh, random_color_opaque(rng));
         // edge feather for some
-        if rng.gen_bool(0.5) {
+        if rng.random_bool(0.5) {
             let mut soft = img.clone();
             draw_soft_circle(
                 &mut soft,
                 (w / 2) as i32,
                 (h / 2) as i32,
                 (bw.min(bh) as f32) / 2.0,
-                [rng.r#gen(), rng.r#gen(), rng.r#gen()],
+                [rng.random(), rng.random(), rng.random()],
             );
             img = soft;
         }
@@ -321,16 +321,16 @@ fn gen_trim_cases(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
 fn gen_irregular(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
     ensure_dir(out)?;
     for i in 0..150u32 {
-        let w = rng.gen_range(32..=256);
-        let h = rng.gen_range(32..=256);
+        let w = rng.random_range(32..=256);
+        let h = rng.random_range(32..=256);
         let mut img = solid(w, h, [0, 0, 0, 0]);
-        let n = rng.gen_range(3..=9);
+        let n = rng.random_range(3..=9);
         for _ in 0..n {
-            let cx = rng.gen_range(0..w) as i32;
-            let cy = rng.gen_range(0..h) as i32;
-            let rw = rng.gen_range(6..=w.min(96)) as f32;
-            let rh = rng.gen_range(6..=h.min(96)) as f32;
-            if rng.gen_bool(0.5) {
+            let cx = rng.random_range(0..w) as i32;
+            let cy = rng.random_range(0..h) as i32;
+            let rw = rng.random_range(6..=w.min(96)) as f32;
+            let rh = rng.random_range(6..=h.min(96)) as f32;
+            if rng.random_bool(0.5) {
                 draw_rect(
                     &mut img,
                     cx.max(0) as u32,
@@ -338,10 +338,10 @@ fn gen_irregular(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
                     rw as u32,
                     rh as u32,
                     [
-                        rng.r#gen(),
-                        rng.r#gen(),
-                        rng.r#gen(),
-                        rng.gen_range(120..=255),
+                        rng.random(),
+                        rng.random(),
+                        rng.random(),
+                        rng.random_range(120..=255),
                     ],
                 );
             } else {
@@ -352,10 +352,10 @@ fn gen_irregular(out: &PathBuf, rng: &mut impl Rng) -> anyhow::Result<()> {
                     rw / 2.0,
                     rh / 2.0,
                     [
-                        rng.r#gen(),
-                        rng.r#gen(),
-                        rng.r#gen(),
-                        rng.gen_range(120..=255),
+                        rng.random(),
+                        rng.random(),
+                        rng.random(),
+                        rng.random_range(120..=255),
                     ],
                 );
             }

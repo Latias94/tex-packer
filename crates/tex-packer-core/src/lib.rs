@@ -1,65 +1,49 @@
-//! Core library for packing textures into atlases.
+//! Core texture-atlas packing library.
 //!
-//! - Algorithms: Skyline (BL/MW + optional Waste Map), MaxRects (BAF/BSSF/BLSF/BL/CP), Guillotine (choice + split)
-//! - Pipeline: `pack_images` takes in-memory images and returns pages + metadata
-//! - Data model is serde-serializable; exporters are provided in helpers and the CLI crate.
+//! The crate exposes validated offline and runtime workflow facades. Placement,
+//! compositing, and preparation details remain implementation-private.
 //!
-//! Quick example:
-//! ```ignore
-//! use image::ImageReader;
-//! use tex_packer_core::{InputImage, PackerConfig, pack_images};
-//! # fn main() -> anyhow::Result<()> {
-//! let img1 = ImageReader::open("a.png")?.decode()?;
-//! let img2 = ImageReader::open("b.png")?.decode()?;
-//! let inputs = vec![
-//!   InputImage { key: "a".into(), image: img1 },
-//!   InputImage { key: "b".into(), image: img2 },
-//! ];
-//! let cfg = PackerConfig { max_width: 1024, max_height: 1024, ..Default::default() };
-//! let out = pack_images(inputs, cfg)?;
-//! println!("pages: {}", out.pages.len());
-//! # Ok(()) }
+//! ```
+//! use image::{DynamicImage, RgbaImage};
+//! use tex_packer_core::config::OfflineConfig;
+//! use tex_packer_core::error::Result;
+//! use tex_packer_core::offline::{InputImage, OfflinePacker};
+//!
+//! # fn main() -> Result<()> {
+//! let packer = OfflinePacker::new(OfflineConfig::default());
+//! let output = packer.pack_images(vec![InputImage {
+//!     key: "hero".into(),
+//!     image: DynamicImage::ImageRgba8(RgbaImage::new(16, 16)),
+//! }])?;
+//! assert_eq!(output.atlas().stats().num_frames, 1);
+//! # Ok(())
+//! # }
 //! ```
 
-pub mod compositing;
+mod compositing;
 pub mod config;
 pub mod error;
 pub mod export;
 mod export_manifest;
-pub mod export_plist;
+mod export_plist;
 mod free_space;
 mod geometry;
 pub mod model;
-pub mod packer;
+pub mod offline;
+mod packer;
 mod packing_plan;
-pub mod pipeline;
+mod pipeline;
 mod preparation;
 pub mod runtime;
-pub mod runtime_atlas;
+mod runtime_atlas;
 mod runtime_placement;
 
-pub use config::*;
-pub use error::*;
-pub use export::*;
-pub use export_manifest::{TemplateContext, TemplatePage, TemplateSprite, to_template_context};
-pub use export_plist::*;
-pub use model::*;
-pub use packer::*;
-pub use pipeline::*;
-pub use preparation::compute_trim_rect;
-
-/// Convenience prelude for common types and functions.
-/// Importing `tex_packer_core::prelude::*` brings the primary APIs into scope.
-pub mod prelude {
-    pub use crate::config::{
-        AlgorithmFamily, AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic,
-        PackerConfig, PackerConfigBuilder, SkylineHeuristic, SortOrder,
-    };
-    pub use crate::model::{Atlas, Frame, Meta, PackStats, Page, Rect};
-    pub use crate::pipeline::LayoutItem;
-    pub use crate::runtime::{AtlasSession, RuntimeStats, RuntimeStrategy, ShelfPolicy};
-    pub use crate::runtime_atlas::{RuntimeAtlas, UpdateRegion};
-    pub use crate::{
-        InputImage, OutputPage, PackOutput, pack_images, pack_layout, pack_layout_items,
-    };
-}
+pub use config::{OfflineConfig, PackingStrategy, PageConfig, RuntimeConfig};
+pub use error::{Result, TexPackerError};
+pub use model::{
+    Atlas, AtlasDocument, Frame, FrameId, Page, PageId, Rect, Region, RegionId, ResolvedFrame,
+};
+pub use offline::{InputImage, LayoutItem, OfflinePacker, PackOutput, RenderedPage};
+pub use runtime::{
+    AtlasSession, RuntimeAtlas, RuntimeImageUpdate, RuntimePlacement, RuntimeStats, UpdateRegion,
+};

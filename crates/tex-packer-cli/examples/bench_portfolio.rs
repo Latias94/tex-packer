@@ -7,18 +7,20 @@ use std::{env, fs};
 use image::{DynamicImage, ImageReader};
 use serde::Serialize;
 use tex_packer_core::config::{
-    AlgorithmFamily, AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic,
-    SkylineHeuristic, SortOrder,
+    GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, OfflineConfig, PackingStrategy,
+    PageConfig, SkylineHeuristic,
 };
-use tex_packer_core::{InputImage, PackerConfig, pack_images};
+use tex_packer_core::offline::{InputImage, OfflinePacker};
 
 #[derive(Debug, Serialize)]
 struct BenchResult {
     name: String,
     pages: usize,
-    total_area: u64,
-    used_area: u64,
-    occupancy: f64,
+    page_area: u128,
+    content_area: u128,
+    allocation_area: u128,
+    content_occupancy: f64,
+    allocation_occupancy: f64,
     ms: u128,
 }
 
@@ -39,61 +41,66 @@ fn main() -> anyhow::Result<()> {
     let images = collect_images(input)?;
     println!("loaded {} images", images.len());
 
-    let base = PackerConfig {
-        max_width: 2048,
-        max_height: 2048,
-        allow_rotation: true,
-        force_max_dimensions: false,
-        border_padding: 0,
-        texture_padding: 2,
-        texture_extrusion: 2,
-        trim: true,
-        trim_threshold: 0,
-        texture_outlines: false,
-        power_of_two: false,
-        square: false,
-        use_waste_map: false,
-        family: AlgorithmFamily::Auto,
-        mr_heuristic: MaxRectsHeuristic::BestAreaFit,
-        skyline_heuristic: SkylineHeuristic::MinWaste,
-        g_choice: GuillotineChoice::BestAreaFit,
-        g_split: GuillotineSplit::SplitShorterLeftoverAxis,
-        auto_mode: AutoMode::Quality,
-        sort_order: SortOrder::AreaDesc,
-        time_budget_ms: None,
-        parallel: false,
-        mr_reference: false,
-        auto_mr_ref_time_ms_threshold: None,
-        auto_mr_ref_input_threshold: None,
-        transparent_policy: tex_packer_core::config::TransparentPolicy::Keep,
-    };
+    let page = PageConfig::builder()
+        .max_dimensions(2048, 2048)
+        .allow_rotation(true)
+        .border_padding(0)
+        .texture_padding(2)
+        .texture_extrusion(2)
+        .build()?;
 
-    let mut candidates: Vec<(String, PackerConfig)> = Vec::new();
-    // Align with auto quality portfolio
-    let mut s_mw = base.clone();
-    s_mw.family = AlgorithmFamily::Skyline;
-    s_mw.skyline_heuristic = SkylineHeuristic::MinWaste;
-    candidates.push(("skyline_mw".into(), s_mw));
-    let mut mr_baf = base.clone();
-    mr_baf.family = AlgorithmFamily::MaxRects;
-    mr_baf.mr_heuristic = MaxRectsHeuristic::BestAreaFit;
-    candidates.push(("maxrects_baf".into(), mr_baf));
-    let mut mr_bl = base.clone();
-    mr_bl.family = AlgorithmFamily::MaxRects;
-    mr_bl.mr_heuristic = MaxRectsHeuristic::BottomLeft;
-    candidates.push(("maxrects_bl".into(), mr_bl));
-    let mut mr_cp = base.clone();
-    mr_cp.family = AlgorithmFamily::MaxRects;
-    mr_cp.mr_heuristic = MaxRectsHeuristic::ContactPoint;
-    candidates.push(("maxrects_cp".into(), mr_cp));
-    let mut g = base.clone();
-    g.family = AlgorithmFamily::Guillotine;
-    g.g_choice = GuillotineChoice::BestAreaFit;
-    g.g_split = GuillotineSplit::SplitShorterLeftoverAxis;
-    candidates.push(("guillotine_baf_slas".into(), g));
+    let candidates = [
+        (
+            "skyline_mw",
+            PackingStrategy::Skyline {
+                heuristic: SkylineHeuristic::MinWaste,
+                use_waste_map: false,
+            },
+        ),
+        (
+            "maxrects_baf",
+            PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::BestAreaFit,
+                reference: false,
+            },
+        ),
+        (
+            "maxrects_bl",
+            PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::BottomLeft,
+                reference: false,
+            },
+        ),
+        (
+            "maxrects_cp",
+            PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::ContactPoint,
+                reference: false,
+            },
+        ),
+        (
+            "guillotine_baf_slas",
+            PackingStrategy::Guillotine {
+                choice: GuillotineChoice::BestAreaFit,
+                split: GuillotineSplit::SplitShorterLeftoverAxis,
+            },
+        ),
+    ]
+    .into_iter()
+    .map(|(name, strategy)| {
+        let config = OfflineConfig::builder()
+            .page_config(page.clone())
+            .outlines(false)
+            .trim(true)
+            .trim_threshold(0)
+            .strategy(strategy)
+            .build()?;
+        Ok((name.to_owned(), config))
+    })
+    .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut results: Vec<BenchResult> = Vec::new();
-    for (name, cfg) in candidates.into_iter() {
+    for (name, cfg) in candidates {
         let start = Instant::now();
         // clone images to avoid moving them between trials
         let cloned: Vec<InputImage> = images
@@ -103,29 +110,27 @@ fn main() -> anyhow::Result<()> {
                 image: i.image.clone(),
             })
             .collect();
-        match pack_images(cloned, cfg.clone()) {
+        match OfflinePacker::new(cfg).pack_images(cloned) {
             Ok(out) => {
-                let (used, total) = compute_stats(&out);
-                let occ = if total > 0 {
-                    used as f64 / total as f64
-                } else {
-                    0.0
-                };
+                let stats = out.stats();
                 let dur = start.elapsed();
                 let ms = dur.as_millis();
                 println!(
-                    "{:<20} pages={} occ={:.2}% time={}",
+                    "{:<20} pages={} content={:.2}% allocation={:.2}% time={}",
                     name,
-                    out.pages.len(),
-                    occ * 100.0,
+                    out.atlas().pages().len(),
+                    stats.content_occupancy * 100.0,
+                    stats.allocation_occupancy * 100.0,
                     fmt_dur(dur)
                 );
                 results.push(BenchResult {
                     name,
-                    pages: out.pages.len(),
-                    total_area: total,
-                    used_area: used,
-                    occupancy: occ,
+                    pages: out.atlas().pages().len(),
+                    page_area: stats.page_area,
+                    content_area: stats.content_area,
+                    allocation_area: stats.allocation_area,
+                    content_occupancy: stats.content_occupancy,
+                    allocation_occupancy: stats.allocation_occupancy,
                     ms,
                 });
             }
@@ -136,25 +141,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     results.sort_by(|a, b| match a.pages.cmp(&b.pages) {
-        std::cmp::Ordering::Equal => a.total_area.cmp(&b.total_area),
+        std::cmp::Ordering::Equal => a.page_area.cmp(&b.page_area),
         other => other,
     });
     let json = serde_json::to_string_pretty(&results)?;
     fs::write(out_dir.join("bench_portfolio.json"), json)?;
     println!("wrote {}", out_dir.join("bench_portfolio.json").display());
     Ok(())
-}
-
-fn compute_stats(out: &tex_packer_core::PackOutput) -> (u64, u64) {
-    let mut used: u64 = 0;
-    let mut total: u64 = 0;
-    for p in &out.atlas.pages {
-        total += (p.width as u64) * (p.height as u64);
-        for f in &p.frames {
-            used += (f.frame.w as u64) * (f.frame.h as u64);
-        }
-    }
-    (used, total)
 }
 
 fn collect_images(path: &Path) -> anyhow::Result<Vec<InputImage>> {

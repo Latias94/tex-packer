@@ -1,18 +1,40 @@
 use std::collections::HashMap;
 
-use tex_packer_core::prelude::*;
+use tex_packer_core::config::{
+    AutoMode, GuillotineChoice, GuillotineSplit, MaxRectsHeuristic, OfflineConfig, PackingStrategy,
+    PageConfig, RuntimeConfig, RuntimeStrategy, ShelfPolicy, SkylineHeuristic, SortOrder,
+};
+use tex_packer_core::model::{Atlas, FrameId, Page, PageId, Rect, RegionId};
+use tex_packer_core::offline::{LayoutItem, OfflinePacker};
+use tex_packer_core::runtime::AtlasSession;
+
+fn layout<K: Into<String>>(inputs: Vec<(K, u32, u32)>, config: OfflineConfig) -> Atlas {
+    let items = inputs
+        .into_iter()
+        .map(|(key, w, h)| LayoutItem {
+            key: key.into(),
+            w,
+            h,
+            source: None,
+            source_size: None,
+            trimmed: false,
+        })
+        .collect();
+    OfflinePacker::new(config)
+        .pack_layout(items)
+        .expect("layout must succeed")
+}
 
 #[derive(Clone)]
 struct OfflineCase {
     name: &'static str,
-    cfg: PackerConfig,
+    cfg: OfflineConfig,
 }
 
 #[derive(Clone)]
 struct RuntimeCase {
     name: &'static str,
-    cfg: PackerConfig,
-    strategy: RuntimeStrategy,
+    cfg: RuntimeConfig,
 }
 
 #[test]
@@ -29,10 +51,10 @@ fn offline_algorithms_satisfy_shared_frame_invariants() {
     ];
 
     for case in offline_cases() {
-        let atlas = pack_layout(items.clone(), case.cfg.clone()).expect(case.name);
+        let atlas = layout(items.clone(), case.cfg.clone());
         assert_atlas_invariants(case.name, &atlas, &expected_sizes(&items));
 
-        let repeated = pack_layout(items.clone(), case.cfg).expect(case.name);
+        let repeated = layout(items.clone(), case.cfg);
         assert_eq!(
             canonical_frames(&atlas),
             canonical_frames(&repeated),
@@ -44,22 +66,27 @@ fn offline_algorithms_satisfy_shared_frame_invariants() {
 
 #[test]
 fn offline_multi_page_invariants_are_page_local() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(32, 32)
-        .force_max_dimensions(true)
+    let page = PageConfig::builder()
+        .max_dimensions(32, 32)
         .allow_rotation(false)
         .texture_padding(0)
         .texture_extrusion(0)
-        .family(AlgorithmFamily::Skyline)
-        .build();
+        .build()
+        .expect("valid page config");
+    let cfg = OfflineConfig::builder()
+        .page_config(page)
+        .force_max_dimensions(true)
+        .strategy(skyline_strategy(SkylineHeuristic::BottomLeft, false))
+        .build()
+        .expect("valid offline config");
     let items = vec![("a", 32, 32), ("b", 32, 32), ("c", 32, 32)];
 
-    let atlas = pack_layout(items.clone(), cfg).expect("multi-page skyline layout");
+    let atlas = layout(items.clone(), cfg);
 
-    assert_eq!(atlas.pages.len(), 3);
+    assert_eq!(atlas.pages().len(), 3);
     assert_atlas_invariants("offline multi-page", &atlas, &expected_sizes(&items));
     assert!(
-        atlas.pages.iter().all(|page| page.frames.len() == 1),
+        atlas.pages().iter().all(|page| page.frames().len() == 1),
         "each full-page frame must be isolated on its own page"
     );
 }
@@ -92,25 +119,31 @@ fn runtime_strategies_satisfy_shared_frame_invariants() {
 
 #[test]
 fn runtime_multi_page_invariants_are_page_local() {
-    let cfg = PackerConfig::builder()
-        .with_max_dimensions(32, 32)
+    let page = PageConfig::builder()
+        .max_dimensions(32, 32)
         .allow_rotation(false)
         .texture_padding(0)
         .texture_extrusion(0)
-        .build();
+        .build()
+        .expect("valid page config");
     let items = vec![("a", 32, 32), ("b", 32, 32), ("c", 32, 32)];
     let case = RuntimeCase {
         name: "runtime guillotine multi-page",
-        cfg,
-        strategy: RuntimeStrategy::Guillotine,
+        cfg: runtime_config(
+            page,
+            RuntimeStrategy::Guillotine {
+                choice: GuillotineChoice::BestAreaFit,
+                split: GuillotineSplit::SplitShorterLeftoverAxis,
+            },
+        ),
     };
 
     let atlas = run_runtime_case(&case, &items);
 
-    assert_eq!(atlas.pages.len(), 3);
+    assert_eq!(atlas.pages().len(), 3);
     assert_atlas_invariants(case.name, &atlas, &expected_sizes(&items));
     assert!(
-        atlas.pages.iter().all(|page| page.frames.len() == 1),
+        atlas.pages().iter().all(|page| page.frames().len() == 1),
         "each full-page frame must be isolated on its own page"
     );
 }
@@ -119,103 +152,144 @@ fn offline_cases() -> Vec<OfflineCase> {
     vec![
         OfflineCase {
             name: "offline skyline bottom-left",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::Skyline)
-                .skyline_heuristic(SkylineHeuristic::BottomLeft)
-                .build(),
+            cfg: offline_config(skyline_strategy(SkylineHeuristic::BottomLeft, false)),
         },
         OfflineCase {
             name: "offline skyline min-waste with waste map",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::Skyline)
-                .skyline_heuristic(SkylineHeuristic::MinWaste)
-                .use_waste_map(true)
-                .build(),
+            cfg: offline_config(skyline_strategy(SkylineHeuristic::MinWaste, true)),
         },
         OfflineCase {
             name: "offline maxrects best-area-fit",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::MaxRects)
-                .mr_heuristic(MaxRectsHeuristic::BestAreaFit)
-                .build(),
+            cfg: offline_config(PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::BestAreaFit,
+                reference: false,
+            }),
         },
         OfflineCase {
             name: "offline maxrects reference best-area-fit",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::MaxRects)
-                .mr_heuristic(MaxRectsHeuristic::BestAreaFit)
-                .mr_reference(true)
-                .build(),
+            cfg: offline_config(PackingStrategy::MaxRects {
+                heuristic: MaxRectsHeuristic::BestAreaFit,
+                reference: true,
+            }),
         },
         OfflineCase {
             name: "offline guillotine best-area-fit",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::Guillotine)
-                .g_choice(GuillotineChoice::BestAreaFit)
-                .g_split(GuillotineSplit::SplitShorterLeftoverAxis)
-                .build(),
+            cfg: offline_config(PackingStrategy::Guillotine {
+                choice: GuillotineChoice::BestAreaFit,
+                split: GuillotineSplit::SplitShorterLeftoverAxis,
+            }),
         },
         OfflineCase {
             name: "offline auto quality",
-            cfg: base_cfg()
-                .family(AlgorithmFamily::Auto)
-                .auto_mode(AutoMode::Quality)
-                .time_budget_ms(Some(50))
-                .build(),
+            cfg: offline_config(PackingStrategy::Auto {
+                mode: AutoMode::Quality,
+                time_budget: Some(std::time::Duration::from_millis(50)),
+                parallel: false,
+                reference_time_threshold: None,
+                reference_input_threshold: None,
+            }),
         },
     ]
 }
 
 fn runtime_cases() -> Vec<RuntimeCase> {
-    let cfg = base_cfg().build();
+    let page = base_page_config();
     vec![
         RuntimeCase {
             name: "runtime guillotine",
-            cfg: cfg.clone(),
-            strategy: RuntimeStrategy::Guillotine,
+            cfg: runtime_config(
+                page.clone(),
+                RuntimeStrategy::Guillotine {
+                    choice: GuillotineChoice::BestAreaFit,
+                    split: GuillotineSplit::SplitShorterLeftoverAxis,
+                },
+            ),
         },
         RuntimeCase {
             name: "runtime shelf next-fit",
-            cfg: cfg.clone(),
-            strategy: RuntimeStrategy::Shelf(ShelfPolicy::NextFit),
+            cfg: runtime_config(
+                page.clone(),
+                RuntimeStrategy::Shelf {
+                    policy: ShelfPolicy::NextFit,
+                },
+            ),
         },
         RuntimeCase {
             name: "runtime shelf first-fit",
-            cfg: cfg.clone(),
-            strategy: RuntimeStrategy::Shelf(ShelfPolicy::FirstFit),
+            cfg: runtime_config(
+                page.clone(),
+                RuntimeStrategy::Shelf {
+                    policy: ShelfPolicy::FirstFit,
+                },
+            ),
         },
         RuntimeCase {
             name: "runtime skyline bottom-left",
-            cfg: cfg.clone(),
-            strategy: RuntimeStrategy::Skyline(SkylineHeuristic::BottomLeft),
+            cfg: runtime_config(
+                page.clone(),
+                RuntimeStrategy::Skyline {
+                    heuristic: SkylineHeuristic::BottomLeft,
+                },
+            ),
         },
         RuntimeCase {
             name: "runtime skyline min-waste",
-            cfg,
-            strategy: RuntimeStrategy::Skyline(SkylineHeuristic::MinWaste),
+            cfg: runtime_config(
+                page,
+                RuntimeStrategy::Skyline {
+                    heuristic: SkylineHeuristic::MinWaste,
+                },
+            ),
         },
     ]
 }
 
-fn base_cfg() -> PackerConfigBuilder {
-    PackerConfig::builder()
-        .with_max_dimensions(96, 96)
-        .force_max_dimensions(true)
+fn base_page_config() -> PageConfig {
+    PageConfig::builder()
+        .max_dimensions(96, 96)
         .allow_rotation(true)
         .border_padding(3)
         .texture_padding(2)
         .texture_extrusion(1)
-        .sort_order(SortOrder::AreaDesc)
+        .build()
+        .expect("valid shared page config")
 }
 
-fn run_runtime_case(case: &RuntimeCase, items: &[(&str, u32, u32)]) -> Atlas<String> {
-    let mut session = AtlasSession::new(case.cfg.clone(), case.strategy.clone());
+fn offline_config(strategy: PackingStrategy) -> OfflineConfig {
+    OfflineConfig::builder()
+        .page_config(base_page_config())
+        .force_max_dimensions(true)
+        .sort_order(SortOrder::AreaDesc)
+        .strategy(strategy)
+        .build()
+        .expect("valid offline config")
+}
+
+fn skyline_strategy(heuristic: SkylineHeuristic, use_waste_map: bool) -> PackingStrategy {
+    PackingStrategy::Skyline {
+        heuristic,
+        use_waste_map,
+    }
+}
+
+fn runtime_config(page: PageConfig, strategy: RuntimeStrategy) -> RuntimeConfig {
+    RuntimeConfig::builder()
+        .page_config(page)
+        .strategy(strategy)
+        .build()
+        .expect("valid runtime config")
+}
+
+fn run_runtime_case(case: &RuntimeCase, items: &[(&str, u32, u32)]) -> Atlas {
+    let mut session = AtlasSession::new(case.cfg.clone());
     for (key, w, h) in items {
         session
             .append((*key).to_string(), *w, *h)
             .unwrap_or_else(|err| panic!("{} should append {key}: {err:?}", case.name));
     }
-    session.snapshot_atlas()
+    session
+        .snapshot_atlas()
+        .unwrap_or_else(|err| panic!("{} should snapshot: {err:?}", case.name))
 }
 
 fn expected_sizes(items: &[(&str, u32, u32)]) -> HashMap<String, (u32, u32)> {
@@ -225,55 +299,54 @@ fn expected_sizes(items: &[(&str, u32, u32)]) -> HashMap<String, (u32, u32)> {
         .collect()
 }
 
-fn assert_atlas_invariants(
-    label: &str,
-    atlas: &Atlas<String>,
-    expected: &HashMap<String, (u32, u32)>,
-) {
+fn assert_atlas_invariants(label: &str, atlas: &Atlas, expected: &HashMap<String, (u32, u32)>) {
     let mut seen = HashMap::new();
 
-    for page in &atlas.pages {
+    for page in atlas.pages() {
         assert!(
-            page.width > 0 && page.height > 0,
+            page.width() > 0 && page.height() > 0,
             "{label}: page {} must have positive dimensions",
-            page.id
+            page.id()
         );
-        assert_page_frames_within_bounds(label, page);
-        assert_page_frames_disjoint(label, page);
+        assert_page_regions_within_bounds(label, page);
+        assert_page_regions_disjoint(label, page);
 
-        for frame in &page.frames {
-            let Some(&(source_w, source_h)) = expected.get(&frame.key) else {
-                panic!("{label}: unexpected frame key {}", frame.key);
+        for resolved in page.resolved_frames() {
+            let frame = resolved.frame();
+            let region = resolved.region();
+            let Some(&(source_w, source_h)) = expected.get(frame.key()) else {
+                panic!("{label}: unexpected frame key {}", frame.key());
             };
             assert_eq!(
-                frame.source,
+                frame.source(),
                 Rect::new(0, 0, source_w, source_h),
                 "{label}: source rect for {} must preserve input dimensions",
-                frame.key
+                frame.key()
             );
             assert_eq!(
-                frame.source_size,
+                frame.source_size(),
                 (source_w, source_h),
                 "{label}: source size for {} must preserve input dimensions",
-                frame.key
+                frame.key()
             );
 
-            let expected_frame_size = if frame.rotated {
+            let expected_frame_size = if region.rotated() {
                 (source_h, source_w)
             } else {
                 (source_w, source_h)
             };
             assert_eq!(
-                (frame.frame.w, frame.frame.h),
+                (region.content().w, region.content().h),
                 expected_frame_size,
                 "{label}: frame size for {} must match rotation flag",
-                frame.key
+                frame.key()
             );
+            assert_eq!(page.region(frame.region_id()), Some(region));
 
             assert!(
-                seen.insert(frame.key.clone(), page.id).is_none(),
+                seen.insert(frame.key().to_string(), page.id()).is_none(),
                 "{label}: duplicate frame key {}",
-                frame.key
+                frame.key()
             );
         }
     }
@@ -285,54 +358,70 @@ fn assert_atlas_invariants(
     );
 }
 
-fn assert_page_frames_within_bounds(label: &str, page: &Page<String>) {
-    for frame in &page.frames {
-        let rect = &frame.frame;
-        assert!(rect.w > 0 && rect.h > 0, "{label}: zero-sized frame");
+fn assert_page_regions_within_bounds(label: &str, page: &Page) {
+    for region in page.regions() {
+        let content = region.content();
+        let allocation = region.allocation();
+        assert!(content.w > 0 && content.h > 0, "{label}: zero-sized region");
         assert!(
-            right_ex(rect) <= page.width as u64 && bottom_ex(rect) <= page.height as u64,
-            "{label}: frame {} {:?} must fit within page {}x{}",
-            frame.key,
-            rect,
-            page.width,
-            page.height
+            right_ex(&allocation) <= u64::from(page.width())
+                && bottom_ex(&allocation) <= u64::from(page.height()),
+            "{label}: allocation for region {} {:?} must fit within page {}x{}",
+            region.id(),
+            allocation,
+            page.width(),
+            page.height()
         );
+        assert!(allocation.contains(&content));
     }
 }
 
-fn assert_page_frames_disjoint(label: &str, page: &Page<String>) {
-    for i in 0..page.frames.len() {
-        for j in (i + 1)..page.frames.len() {
-            let a = &page.frames[i].frame;
-            let b = &page.frames[j].frame;
+fn assert_page_regions_disjoint(label: &str, page: &Page) {
+    for i in 0..page.regions().len() {
+        for j in (i + 1)..page.regions().len() {
+            let a = page.regions()[i].allocation();
+            let b = page.regions()[j].allocation();
             assert!(
-                !intersects(a, b),
-                "{label}: frames {} {:?} and {} {:?} overlap on page {}",
-                page.frames[i].key,
+                !intersects(&a, &b),
+                "{label}: region allocations {} {:?} and {} {:?} overlap on page {}",
+                page.regions()[i].id(),
                 a,
-                page.frames[j].key,
+                page.regions()[j].id(),
                 b,
-                page.id
+                page.id()
             );
         }
     }
 }
 
-type CanonicalFrame = (usize, String, Rect, bool, Rect, (u32, u32));
+type CanonicalFrame = (
+    PageId,
+    FrameId,
+    String,
+    RegionId,
+    Rect,
+    bool,
+    Rect,
+    (u32, u32),
+);
 
-fn canonical_frames(atlas: &Atlas<String>) -> Vec<CanonicalFrame> {
+fn canonical_frames(atlas: &Atlas) -> Vec<CanonicalFrame> {
     let mut out = atlas
-        .pages
+        .pages()
         .iter()
         .flat_map(|page| {
-            page.frames.iter().map(|frame| {
+            page.resolved_frames().map(|resolved| {
+                let frame = resolved.frame();
+                let region = resolved.region();
                 (
-                    page.id,
-                    frame.key.clone(),
-                    frame.frame,
-                    frame.rotated,
-                    frame.source,
-                    frame.source_size,
+                    page.id(),
+                    frame.id(),
+                    frame.key().to_string(),
+                    region.id(),
+                    region.content(),
+                    region.rotated(),
+                    frame.source(),
+                    frame.source_size(),
                 )
             })
         })

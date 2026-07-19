@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 - 2026-07-19
 
 v0.3.0 is a deliberate source-breaking release that replaces representation-oriented Rust APIs with validated offline and runtime workflows. CLI command families, GUI workflows, and the established JSON, plist, and template export shapes remain compatible. The release is tracked in [PR #2](https://github.com/Latias94/tex-packer/pull/2).
 

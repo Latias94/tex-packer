@@ -13,4 +13,8 @@ homepage = "https://github.com/Latias94/tex-packer"
 authors = ["Latias94"]
 edition = "2024"
 
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
 

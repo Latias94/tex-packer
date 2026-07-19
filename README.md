@@ -206,6 +206,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check --workspace --all-targets --all-features --locked
 ```
 
+Maintainers should follow [the release procedure](docs/releasing.md) for CLI
+artifacts, crates.io trusted publishing, and partial-release recovery.
+
 ## Status
 
 v0.3 is a deliberate breaking release focused on explicit domain identity, validated configuration, transactional runtime mutation, and a smaller public API.

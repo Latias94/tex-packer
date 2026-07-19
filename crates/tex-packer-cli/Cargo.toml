@@ -45,3 +45,6 @@ parallel = ["tex-packer-core/parallel"]
 [[bin]]
 name = "tex-packer"
 path = "src/main.rs"
+
+[package.metadata.dist]
+dist = true

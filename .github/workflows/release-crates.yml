@@ -1,0 +1,239 @@
+name: Publish crates.io
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Annotated release tag, for example v0.4.0 or v0.4.0-rc.1"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crates-io-publish
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release-source:
+    name: Validate release source
+    uses: ./.github/workflows/release-tag-check.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
+    permissions:
+      contents: read
+
+  preflight:
+    name: Verify and package release
+    needs: release-source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      core_checksum: ${{ steps.packages.outputs.core_checksum }}
+      cli_checksum: ${{ steps.packages.outputs.cli_checksum }}
+      gui_checksum: ${{ steps.packages.outputs.gui_checksum }}
+    steps:
+      - name: Check out verified source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-source.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy,rustfmt
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Verify package versions
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-source.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          metadata="$(cargo metadata --no-deps --format-version 1)"
+          crates=(tex-packer-core tex-packer-cli tex-packer-gui)
+          for crate in "${crates[@]}"; do
+            crate_version="$(jq -r --arg crate "$crate" '.packages[] | select(.name == $crate) | .version' <<< "$metadata")"
+            if [[ "$crate_version" != "$VERSION" ]]; then
+              echo "::error::$crate version '$crate_version' does not match tag version '$VERSION'"
+              exit 1
+            fi
+          done
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Test workspace
+        run: cargo nextest run --workspace --all-features --locked
+
+      - name: Check lints
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Test documentation
+        run: cargo test --doc --workspace --all-features --locked
+
+      - name: Package release crates without credentials
+        id: packages
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-source.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          crates=(tex-packer-core tex-packer-cli tex-packer-gui)
+          for crate in "${crates[@]}"; do
+            cargo publish \
+              --package "$crate" \
+              --locked \
+              --dry-run \
+              --no-verify \
+              --registry crates-io
+
+            archive="target/package/$crate-$VERSION.crate"
+            checksum="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+            case "$crate" in
+              tex-packer-core) output_name=core_checksum ;;
+              tex-packer-cli) output_name=cli_checksum ;;
+              tex-packer-gui) output_name=gui_checksum ;;
+              *) echo "::error::Unexpected release crate: $crate"; exit 1 ;;
+            esac
+            printf '%s=%s\n' "$output_name" "$checksum" >> "$GITHUB_OUTPUT"
+            echo "$crate $VERSION package checksum: $checksum"
+          done
+
+  publish:
+    name: Publish workspace crates
+    needs: [release-source, preflight]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: crates.io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out verified source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-source.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish crates in dependency order
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          VERSION: ${{ needs.release-source.outputs.version }}
+          CORE_CHECKSUM: ${{ needs.preflight.outputs.core_checksum }}
+          CLI_CHECKSUM: ${{ needs.preflight.outputs.cli_checksum }}
+          GUI_CHECKSUM: ${{ needs.preflight.outputs.gui_checksum }}
+        run: |
+          set -euo pipefail
+
+          registry_checksum() {
+            local crate="$1"
+            local version="$2"
+
+            curl --fail --silent --show-error \
+              --retry 3 \
+              --retry-delay 2 \
+              --header 'User-Agent: tex-packer-release-workflow' \
+              "https://crates.io/api/v1/crates/$crate/$version" \
+              | jq -er '.version.checksum'
+          }
+
+          verify_registry_crate() {
+            local crate="$1"
+            local version="$2"
+            local expected_checksum="$3"
+            local published_checksum
+
+            if ! published_checksum="$(registry_checksum "$crate" "$version")"; then
+              return 1
+            fi
+            if [[ "$published_checksum" != "$expected_checksum" ]]; then
+              echo "::error::$crate $version exists with checksum $published_checksum, expected $expected_checksum"
+              return 2
+            fi
+
+            echo "$crate $version is visible on crates.io with the expected checksum"
+            return 0
+          }
+
+          wait_for_crate_version() {
+            local crate="$1"
+            local version="$2"
+            local expected_checksum="$3"
+            local status
+
+            for attempt in {1..12}; do
+              status=0
+              verify_registry_crate "$crate" "$version" "$expected_checksum" || status=$?
+              if [[ "$status" -eq 0 ]]; then
+                return 0
+              fi
+              if [[ "$status" -eq 2 ]]; then
+                return 2
+              fi
+
+              echo "Waiting for $crate $version to become visible on crates.io ($attempt/12)"
+              if [[ "$attempt" -lt 12 ]]; then
+                sleep 10
+              fi
+            done
+
+            echo "::error::$crate $version did not become visible on crates.io"
+            return 1
+          }
+
+          publish_crate() {
+            local crate="$1"
+            local expected_checksum="$2"
+            local status=0
+
+            verify_registry_crate "$crate" "$VERSION" "$expected_checksum" || status=$?
+            if [[ "$status" -eq 0 ]]; then
+              echo "Skipping $crate $VERSION because the expected package is already published"
+              return 0
+            fi
+            if [[ "$status" -eq 2 ]]; then
+              return 1
+            fi
+
+            echo "Publishing $crate $VERSION"
+            if cargo publish \
+              --package "$crate" \
+              --locked \
+              --no-verify \
+              --registry crates-io; then
+              wait_for_crate_version "$crate" "$VERSION" "$expected_checksum"
+              return $?
+            fi
+
+            status=0
+            wait_for_crate_version "$crate" "$VERSION" "$expected_checksum" || status=$?
+            if [[ "$status" -eq 0 ]]; then
+              echo "$crate $VERSION became visible after an ambiguous publish failure"
+              return 0
+            fi
+            return "$status"
+          }
+
+          crates=(tex-packer-core tex-packer-cli tex-packer-gui)
+          checksums=("$CORE_CHECKSUM" "$CLI_CHECKSUM" "$GUI_CHECKSUM")
+          for index in "${!crates[@]}"; do
+            publish_crate "${crates[$index]}" "${checksums[$index]}"
+          done

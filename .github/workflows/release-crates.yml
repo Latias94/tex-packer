@@ -90,10 +90,9 @@ jobs:
 
           crates=(tex-packer-core tex-packer-cli tex-packer-gui)
           for crate in "${crates[@]}"; do
-            cargo publish \
+            cargo package \
               --package "$crate" \
               --locked \
-              --dry-run \
               --no-verify \
               --registry crates-io
 
